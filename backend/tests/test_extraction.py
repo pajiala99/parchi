@@ -212,3 +212,15 @@ def test_line_items_sum_check():
     assert {c["name"]: c["ok"] for c in ok["checks"]}["line_items_sum"] is True
     bad = summarize(_extraction(subtotal=None, tax=None, total=Decimal("500"), line_items=items))
     assert {c["name"]: c["ok"] for c in bad["checks"]}["line_items_sum"] is False
+
+
+def test_dates_and_merged_columns_do_not_become_quantities_or_rates():
+    lines = [
+        "SHOP",
+        "Item Batch Exp Qty Rate Amount",
+        "Azithromycin 500 Tab AZ771 05/27 1118.50 118.50",
+        "Grand Total 118.50",
+    ]
+    (item,) = parse_lines(lines).line_items
+    assert item.description == "Azithromycin 500 Tab"
+    assert item.quantity is None and item.unit_price is None and item.amount == Decimal("118.50")

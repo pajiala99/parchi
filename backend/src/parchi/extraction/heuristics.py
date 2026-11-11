@@ -229,9 +229,12 @@ def _line_items(lines: list[Line]) -> list[LineItem]:
         unit_price = amounts[-2].value if len(amounts) >= 2 else None
         quantity = None
         tail = text[: amounts[-2].start] if len(amounts) >= 2 else text[: amounts[-1].start]
-        qty_match = re.search(r"(?<![\w.,])(\d{1,3})(?:\s*[x×])?\s*$", tail.strip())
+        # A quantity is a small bare number, never the tail of a date or code such as "05/27".
+        qty_match = re.search(r"(?<![\w.,/-])(\d{1,3})(?:\s*[x×])?\s*$", tail.strip())
         if qty_match:
             quantity = Decimal(qty_match.group(1))
+        if unit_price is not None and unit_price > amount:
+            unit_price = None  # a rate can't exceed the line amount: OCR merged two columns
         if unit_price is not None and quantity is None and amounts[-2].value == amount:
             unit_price = None
         items.append(LineItem(description=description[:200], quantity=quantity, unit_price=unit_price, amount=amount))

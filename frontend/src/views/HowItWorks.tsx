@@ -5,27 +5,27 @@ const NODES = [
   { id: "cdn", x: 215, y: 50, title: "CloudFront", sub: "S3 site + /api/*" },
   { id: "api", x: 410, y: 50, title: "API Gateway", sub: "HTTP API, throttled" },
   { id: "fn", x: 605, y: 50, title: "Lambda × 3", sub: "uploads · docs · email" },
-  { id: "db", x: 820, y: 185, title: "DynamoDB", sub: "single table, on-demand" },
+  { id: "db", x: 820, y: 185, title: "DynamoDB", sub: "single table" },
   { id: "s3", x: 215, y: 300, title: "S3 uploads", sub: "private, SSE, CORS" },
   { id: "sqs", x: 410, y: 300, title: "SQS", sub: "ingest queue + DLQ" },
   { id: "worker", x: 605, y: 300, title: "Lambda worker", sub: "processor, ≤5 at once" },
   { id: "ocr", x: 605, y: 410, title: "Textract", sub: "AnalyzeExpense" },
-  { id: "sns", x: 820, y: 360, title: "SNS", sub: "email, filtered per owner" },
+  { id: "sns", x: 820, y: 360, title: "SNS", sub: "per-owner filter" },
 ] as const;
 
-const W = 160;
+const W = 168;
 const H = 58;
 
 type Edge = { d: string; async?: boolean; step?: number; sx?: number; sy?: number; label?: string; lx?: number; ly?: number };
 
 const EDGES: Edge[] = [
-  { d: `M${20 + W},${200} C 190,200 190,79 215,79`, step: 1, sx: 178, sy: 140, label: "POST /api/uploads", lx: 120, ly: 120 },
+  { d: `M${20 + W},${200} C 190,200 190,79 215,79`, step: 1, sx: 178, sy: 140, label: "POST /api/uploads", lx: 24, ly: 160 },
   { d: `M${215 + W},79 L410,79` },
   { d: `M${410 + W},79 L605,79` },
-  { d: `M${605 + W},79 C 800,79 840,120 880,185`, label: "record: waiting", lx: 790, ly: 115 },
-  { d: `M${20 + W},${225} C 190,225 190,329 215,329`, step: 2, sx: 178, sy: 270, label: "file, presigned POST", lx: 60, ly: 290 },
-  { d: `M${215 + W},329 L410,329`, async: true, step: 3, sx: 392, sy: 312, label: "ObjectCreated", lx: 395, ly: 360 },
-  { d: `M${410 + W},329 L605,329`, async: true, step: 4, sx: 587, sy: 312, label: "batches of 5", lx: 585, ly: 360 },
+  { d: `M${605 + W},79 C 800,79 840,120 880,185`, label: "record: waiting", lx: 890, ly: 128 },
+  { d: `M${20 + W},${225} C 190,225 190,329 215,329`, step: 2, sx: 178, sy: 270, label: "file, presigned POST", lx: 24, ly: 275 },
+  { d: `M${215 + W},329 L410,329`, async: true, step: 3, sx: 392, sy: 312, label: "ObjectCreated", lx: 392, ly: 380 },
+  { d: `M${410 + W},329 L605,329`, async: true, step: 4, sx: 587, sy: 312, label: "batches of 5", lx: 587, ly: 380 },
   { d: `M685,${300 + H} L685,410`, step: 5, sx: 697, sy: 388 },
   { d: `M${605 + W},315 C 800,315 860,280 890,${185 + H}`, step: 6, sx: 812, sy: 300, label: "fields, checks", lx: 800, ly: 280 },
   { d: `M${605 + W},345 C 790,345 800,389 820,389`, async: true, step: 7, sx: 798, sy: 352 },
