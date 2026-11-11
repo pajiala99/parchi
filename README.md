@@ -84,11 +84,11 @@ About **$10 per 1,000 documents**, and ~99% of that is Textract ($0.01 per page)
 [`local/devstack.py`](local/devstack.py) runs the **same Lambda handlers** against [moto](https://github.com/getmoto/moto), which emulates S3, SQS, SNS and DynamoDB. The bucket really sends `ObjectCreated` events to the queue, a poller thread plays the Lambda event source mapping, routes are read from `template.yaml`, and emails land in an outbox shown in Settings. OCR uses **Tesseract** if installed, or replays simulated Textract responses for the sample bills.
 
 ```bash
-python3.13 -m venv .venv && .venv/bin/pip install -r backend/requirements-dev.txt
-brew install tesseract                      # optional, for real OCR offline
-.venv/bin/python local/devstack.py          # API on :3001, emulated AWS on :5055
-cd frontend && npm install && npm run dev   # http://localhost:5173 — try the sample bills
+brew install tesseract      # optional: real OCR for any bill (without it, the sample bills still work)
+scripts/demo.sh             # sets up on first run, builds, starts and opens http://localhost:3001
 ```
+
+For development with live reload, run `.venv/bin/python local/devstack.py` and `cd frontend && npm run dev` (http://localhost:5173). A step-by-step viva script with likely questions is in [docs/DEMO.md](docs/DEMO.md).
 
 ## Deploy to AWS
 
@@ -121,8 +121,8 @@ backend/tests/         pytest suite (moto, botocore Stubber, end-to-end over HTT
 frontend/              React + TypeScript + Vite dashboard (no UI kit)
 local/                 devstack.py, make_samples.py, evaluate.py
 samples/               synthetic bills, ground truth, simulated Textract responses
-scripts/               deploy.sh, teardown.sh
-docs/                  REPORT.md (course report), DEPLOY.md, screenshots/
+scripts/               demo.sh (offline demo), deploy.sh, teardown.sh
+docs/                  REPORT.md (course report), DEMO.md (viva guide), DEPLOY.md, screenshots/
 ```
 
 ## License

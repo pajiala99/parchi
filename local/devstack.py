@@ -21,6 +21,7 @@ import argparse
 import collections
 import importlib
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -344,6 +345,9 @@ def main() -> None:
 
     from moto.server import ThreadedMotoServer
 
+    # The emulator logs every request it serves; keep the console to the pipeline's own logs.
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
     moto = ThreadedMotoServer(ip_address="127.0.0.1", port=args.aws_port, verbose=False)
     moto.start()
     urls = provision()
@@ -357,12 +361,18 @@ def main() -> None:
     poller.start()
     routes = load_routes()
     server = make_server(routes, args.api_port, ROOT / "frontend" / "dist")
+    built = (ROOT / "frontend" / "dist" / "index.html").exists()
+    dashboard = (
+        f"http://localhost:{args.api_port} (built copy)  ·  live-reload: cd frontend && npm run dev"
+        if built
+        else f"cd frontend && npm run dev  ->  {args.app_url}"
+    )
     print(
         f"\n  Parchi devstack ready\n"
         f"  - API (Lambda handlers, {len(routes)} routes from template.yaml): http://127.0.0.1:{args.api_port}/api/health\n"
         f"  - Emulated S3 / SQS / SNS / DynamoDB (moto):     {endpoint}\n"
         f"  - OCR engine: {engine}\n"
-        f"  - Dashboard: cd frontend && npm run dev  ->  {args.app_url}\n",
+        f"  - Dashboard: {dashboard}\n",
         flush=True,
     )
     try:
