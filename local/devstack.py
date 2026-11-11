@@ -71,7 +71,7 @@ CfnLoader.add_multi_constructor("!", _cfn_tag)
 
 def load_routes() -> list[tuple[str, str, re.Pattern, str]]:
     """(method, route path, regex, handler) for every HttpApi event in template.yaml."""
-    template = yaml.load((ROOT / "template.yaml").read_text(), Loader=CfnLoader)  # noqa: S506
+    template = yaml.load((ROOT / "template.yaml").read_text(), Loader=CfnLoader)
     routes = []
     for resource in template["Resources"].values():
         if resource["Type"] != "AWS::Serverless::Function":
@@ -184,11 +184,11 @@ class Poller(threading.Thread):
                 for message in batch:
                     if message["MessageId"] not in failed:  # failures reappear after the visibility timeout
                         sqs.delete_message(QueueUrl=self.urls["ingest"], ReceiptHandle=message["ReceiptHandle"])
-            except Exception as exc:  # noqa: BLE001 - keep the emulator alive
+            except Exception as exc:
                 print(f"[devstack] poller error: {exc}", file=sys.stderr)
                 time.sleep(1)
 
-    def _collect_mail(self, sqs) -> None:  # noqa: ANN001
+    def _collect_mail(self, sqs) -> None:
         messages = sqs.receive_message(QueueUrl=self.urls["mailbox"], MaxNumberOfMessages=10).get("Messages", [])
         for message in messages:
             envelope = json.loads(message["Body"])
@@ -227,7 +227,8 @@ def make_server(routes, port: int, static_dir: Path) -> ThreadingHTTPServer:
 
         def log_message(self, fmt, *args):  # quieter than the default
             if not self.path.startswith("/api/documents") or self.command != "GET":
-                sys.stderr.write(f"[api] {self.command} {self.path.split('?')[0]} -> {args[1] if len(args) > 1 else ''}\n")
+                status = args[1] if len(args) > 1 else ""
+                sys.stderr.write(f"[api] {self.command} {self.path.split('?')[0]} -> {status}\n")
 
         def _send(self, status: int, body: bytes, headers: dict[str, str]) -> None:
             self.send_response(status)
@@ -298,7 +299,7 @@ def make_server(routes, port: int, static_dir: Path) -> ThreadingHTTPServer:
                     self._static()
                 else:
                     self._send(405, b"", {})
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"[devstack] request failed: {exc}", file=sys.stderr)
                 self._send(500, b'{"message":"Internal Server Error"}', {"content-type": "application/json"})
 

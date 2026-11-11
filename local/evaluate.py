@@ -67,7 +67,8 @@ def main() -> None:
     overall = sum(hits.values()) / (total * len(FIELDS))
     print(f"\nOverall field accuracy: {overall:.0%} ({sum(hits.values())}/{total * len(FIELDS)})")
     out = ROOT / "samples" / "evaluation.json"
-    out.write_text(json.dumps({"overall": round(overall, 4), "fields": hits, "samples": results}, indent=2, default=str))
+    report = {"overall": round(overall, 4), "fields": hits, "samples": results}
+    out.write_text(json.dumps(report, indent=2, default=str))
 
 
 if __name__ == "__main__":

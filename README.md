@@ -7,7 +7,7 @@ UCS531 Cloud Computing project, Thapar Institute of Engineering & Technology. Te
 - `template.yaml` — AWS SAM: 4 Lambdas, HTTP API, S3 + CloudFront, SQS + DLQ, DynamoDB, SNS, per-function IAM roles, alarms, dashboard. Passes cfn-lint and `sam validate --lint`; `sam build` succeeds. **Not deployed yet.**
 - Offline: `.venv/bin/python local/devstack.py` then `cd frontend && npm run dev` (moto emulates AWS; Tesseract does the OCR).
 - Tests: `.venv/bin/pytest` (117 passing, 93% coverage, incl. an HTTP end-to-end run) and `cd frontend && npm test` (11 passing).
-- Deploy: `sam build && sam deploy --guided`, then sync `frontend/dist` to the `SiteBucketName` output.
+- Deploy: `scripts/deploy.sh` builds and deploys the stack, publishes the dashboard to S3 and invalidates CloudFront (`-h` lists the options, e.g. `--lambda-role` for AWS Academy).
 
 Sample bills and their Textract responses in `samples/` are synthetic; all names and GSTINs are fictional.
 
