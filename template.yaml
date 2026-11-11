@@ -1,0 +1,808 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Parchi - a serverless, event-driven document processing pipeline (UCS531 Cloud Computing,
+  Thapar Institute of Engineering & Technology). Browser -> API Gateway -> Lambda presigns an
+  S3 upload -> S3 event -> SQS -> Lambda + Amazon Textract -> DynamoDB -> SNS email, with a
+  React dashboard on S3 + CloudFront.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: {default: Deployment}
+        Parameters: [Stage, ExistingLambdaRoleArn]
+      - Label: {default: Cost guard rails}
+        Parameters:
+          - DailyUploadLimitPerWorkspace
+          - DailyUploadLimitGlobal
+          - MaxUploadMB
+          - ProcessorMaxConcurrency
+          - UploadRetentionDays
+          - AlertEmail
+          - MonthlyBudgetUsd
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedPattern: "^[a-z0-9-]{1,10}$"
+    Description: Lowercase name for this deployment; it is part of every resource name.
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional. Receives operational alarms and the monthly budget alert.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: Monthly AWS cost budget (only created when AlertEmail is set).
+  DailyUploadLimitPerWorkspace:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    Description: Documents one browser workspace may process per day.
+  DailyUploadLimitGlobal:
+    Type: Number
+    Default: 200
+    MinValue: 1
+    Description: Documents the whole deployment may process per day (keeps Textract in the free tier).
+  MaxUploadMB:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 10
+    Description: Largest accepted upload; Textract's synchronous API reads files up to 10 MB.
+  ExistingLambdaRoleArn:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional. Run every function with this IAM role instead of creating one least-privilege
+      role per function. For AWS Academy Learner Lab, pass the LabRole ARN.
+  ProcessorMaxConcurrency:
+    Type: Number
+    Default: 5
+    MinValue: 2
+    MaxValue: 1000
+    Description: Most processor invocations SQS may run at once (protects Textract's TPS quota).
+  UploadRetentionDays:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: Delete uploaded files after this many days (0 keeps them).
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+  UseExistingRole: !Not [!Equals [!Ref ExistingLambdaRoleArn, ""]]
+  CreateRoles: !Equals [!Ref ExistingLambdaRoleArn, ""]
+  HasRetention: !Not [!Equals [!Ref UploadRetentionDays, "0"]]
+
+# The upload bucket name is built with !Sub wherever it is needed instead of
+# !Ref UploadBucket. The bucket's CORS rule names the CloudFront domain, CloudFront
+# fronts the HTTP API, and the API depends on the functions: a !Ref from the
+# functions to the bucket would close that loop into a circular dependency.
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures: [arm64]
+    CodeUri: backend/src/
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        TABLE_NAME: !Ref DocumentsTable
+        UPLOAD_BUCKET: !Sub "parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}"
+        TOPIC_ARN: !Ref NotificationsTopic
+        INGEST_QUEUE_URL: !Ref IngestQueue
+        OCR_ENGINE: textract
+        MAX_UPLOAD_MB: !Ref MaxUploadMB
+        DAILY_UPLOAD_LIMIT_WORKSPACE: !Ref DailyUploadLimitPerWorkspace
+        DAILY_UPLOAD_LIMIT_GLOBAL: !Ref DailyUploadLimitGlobal
+
+Resources:
+  # ------------------------------------------------------------------ data
+
+  DocumentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "parchi-${Stage}-documents"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    # S3 test-publishes to the queue when notifications are configured, so the
+    # queue policy has to exist first.
+    DependsOn: IngestQueuePolicy
+    Properties:
+      BucketName: !Sub "parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - Id: browser-uploads
+            AllowedMethods: [POST, GET, HEAD]
+            AllowedOrigins:
+              - !Sub "https://${Distribution.DomainName}"
+              - http://localhost:5173
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+          - !If
+            - HasRetention
+            - Id: expire-uploads
+              Status: Enabled
+              Prefix: uploads/
+              ExpirationInDays: !Ref UploadRetentionDays
+            - !Ref AWS::NoValue
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: "s3:ObjectCreated:*"
+            Queue: !GetAtt IngestQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+
+  UploadBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref UploadBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt UploadBucket.Arn
+              - !Sub "${UploadBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # -------------------------------------------------------------- messaging
+
+  IngestDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "parchi-${Stage}-ingest-dlq"
+      MessageRetentionPeriod: 1209600 # 14 days to inspect and replay
+      SqsManagedSseEnabled: true
+
+  IngestQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "parchi-${Stage}-ingest"
+      # AWS recommends at least 6x the consuming function's timeout (90 s).
+      VisibilityTimeout: 540
+      MessageRetentionPeriod: 345600 # 4 days
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IngestDeadLetterQueue.Arn
+        maxReceiveCount: 3 # keep in step with MAX_RECEIVE_COUNT on ProcessorFunction
+
+  IngestQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref IngestQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowUploadEventsFromTheUploadBucket
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt IngestQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:s3:::parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}"
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  NotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "parchi-${Stage}-notifications"
+      DisplayName: Parchi
+
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "parchi-${Stage}-alerts"
+      DisplayName: Parchi alerts
+
+  AlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # ------------------------------------------------------------------- API
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: !Sub "Parchi ${Stage} API, served to browsers through CloudFront under /api/*"
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 20
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogs.Arn
+        Format: >-
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp",
+          "requestTime":"$context.requestTime","method":"$context.httpMethod",
+          "route":"$context.routeKey","status":"$context.status",
+          "latencyMs":"$context.responseLatency","integrationLatencyMs":"$context.integrationLatency",
+          "integrationError":"$context.integrationErrorMessage"}
+
+  ApiAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/parchi-${Stage}-api-access"
+      RetentionInDays: 14
+
+  # -------------------------------------------------------------- functions
+
+  UploadsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Issues a presigned S3 POST for each new document
+      Handler: parchi.handlers.uploads.handler
+      Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt UploadsRole.Arn]
+      Events:
+        CreateUpload:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: POST, Path: /api/uploads}
+
+  DocumentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Lists, shows, corrects, reprocesses and deletes documents; workspace stats
+      Handler: parchi.handlers.documents.handler
+      Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt DocumentsRole.Arn]
+      Events:
+        Health:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: GET, Path: /api/health}
+        ListDocuments:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: GET, Path: /api/documents}
+        GetDocument:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: GET, Path: "/api/documents/{id}"}
+        PatchDocument:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: PATCH, Path: "/api/documents/{id}"}
+        DeleteDocument:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: DELETE, Path: "/api/documents/{id}"}
+        ReprocessDocument:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: POST, Path: "/api/documents/{id}/reprocess"}
+        Stats:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: GET, Path: /api/stats}
+
+  SubscriptionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Subscribes the workspace's email to SNS with an owner filter policy
+      Handler: parchi.handlers.subscription.handler
+      Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt SubscriptionRole.Arn]
+      Events:
+        GetSubscription:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: GET, Path: /api/subscription}
+        PutSubscription:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: PUT, Path: /api/subscription}
+        DeleteSubscription:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Method: DELETE, Path: /api/subscription}
+
+  ProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Reads each uploaded document with Textract, files it in DynamoDB and notifies via SNS
+      Handler: parchi.handlers.processor.handler
+      Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt ProcessorRole.Arn]
+      MemorySize: 512
+      Timeout: 90
+      Environment:
+        Variables:
+          APP_URL: !Sub "https://${Distribution.DomainName}"
+          MAX_RECEIVE_COUNT: "3"
+          PROCESSING_LEASE_SECONDS: "120"
+      Events:
+        UploadEvents:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt IngestQueue.Arn
+            BatchSize: 5
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig:
+              MaximumConcurrency: !Ref ProcessorMaxConcurrency
+
+  UploadsLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${UploadsFunction}"
+      RetentionInDays: 14
+
+  DocumentsLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DocumentsFunction}"
+      RetentionInDays: 14
+
+  SubscriptionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SubscriptionFunction}"
+      RetentionInDays: 14
+
+  ProcessorLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProcessorFunction}"
+      RetentionInDays: 14
+
+  # ------------------------------------------- IAM: one role per function
+
+  UploadsRole:
+    Type: AWS::IAM::Role
+    Condition: CreateRoles
+    Properties:
+      Description: Parchi uploads function - create document records and presign S3 uploads
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Policies:
+        - PolicyName: uploads
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CreateRecordsAndCountQuota
+                Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt DocumentsTable.Arn
+              - Sid: SignUploads # a presigned POST carries this role's permission to PutObject
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}/uploads/*"
+
+  DocumentsRole:
+    Type: AWS::IAM::Role
+    Condition: CreateRoles
+    Properties:
+      Description: Parchi documents function - read, edit and delete documents; requeue for reprocessing
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Policies:
+        - PolicyName: documents
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadAndEditRecords
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
+                Resource: !GetAtt DocumentsTable.Arn
+              - Sid: PreviewAndDeleteFiles
+                Effect: Allow
+                Action: [s3:GetObject, s3:DeleteObject]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}/uploads/*"
+              - Sid: RequeueForReprocessing
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt IngestQueue.Arn
+
+  SubscriptionRole:
+    Type: AWS::IAM::Role
+    Condition: CreateRoles
+    Properties:
+      Description: Parchi subscription function - manage email subscriptions on the notifications topic
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Policies:
+        - PolicyName: subscription
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Profiles
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt DocumentsTable.Arn
+              - Sid: SubscribeToTheNotificationsTopic
+                Effect: Allow
+                Action: [sns:Subscribe, sns:ListSubscriptionsByTopic]
+                Resource: !Ref NotificationsTopic
+              - Sid: ManageSubscriptions # these SNS actions take a subscription ARN, not a topic
+                Effect: Allow
+                Action: [sns:GetSubscriptionAttributes, sns:SetSubscriptionAttributes, sns:Unsubscribe]
+                Resource: "*"
+
+  ProcessorRole:
+    Type: AWS::IAM::Role
+    Condition: CreateRoles
+    Properties:
+      Description: Parchi processor - consume upload events, read files with Textract, file results, notify
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Policies:
+        - PolicyName: processor
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ConsumeUploadEvents
+                Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes, sqs:ChangeMessageVisibility]
+                Resource: !GetAtt IngestQueue.Arn
+              - Sid: ReadUploads # Textract reads the S3 object with the caller's permissions
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}/uploads/*"
+              - Sid: AnalyzeExpenses # Textract has no resource-level permissions
+                Effect: Allow
+                Action: textract:AnalyzeExpense
+                Resource: "*"
+              - Sid: FileResults
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+                Resource: !GetAtt DocumentsTable.Arn
+              - Sid: Notify
+                Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref NotificationsTopic
+
+  # -------------------------------------------- dashboard hosting (S3 + CDN)
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowThisDistributionOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt SiteBucket.Arn
+              - !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  SiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "parchi-${Stage}-site-${AWS::Region}"
+        Description: CloudFront signs its requests to the private site bucket
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # One domain serves the dashboard and the API (/api/*), so the browser never
+  # makes a cross-origin API call and no CORS configuration is needed for it.
+  # There are no custom error responses on purpose: they apply to every origin
+  # and would turn API 403/404 replies into index.html. The SPA uses #/ routes.
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "Parchi ${Stage} dashboard and API"
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_200 # includes edge locations in India
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: api
+            DomainName: !Sub "${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03 # Managed-SecurityHeadersPolicy
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
+
+  # ------------------------------------------------------------ operations
+
+  DeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "parchi-${Stage}-dead-letters"
+      AlarmDescription: An upload event failed every retry and is waiting in the dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt IngestDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ProcessorErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "parchi-${Stage}-processor-errors"
+      AlarmDescription: The processor function is throwing errors (throttling, permissions or a bug).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ApiServerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "parchi-${Stage}-api-5xx"
+      AlarmDescription: The API is returning server errors.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+        - Name: Stage
+          Value: $default
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  QueueBacklogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "parchi-${Stage}-queue-backlog"
+      AlarmDescription: Upload events have waited more than 15 minutes for the processor.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt IngestQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 900
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "parchi-${Stage}-${AWS::Region}"
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {"type": "text", "x": 0, "y": 0, "width": 24, "height": 2,
+               "properties": {"markdown": "## Parchi (${Stage}) - document pipeline\nS3 upload event -> SQS -> Lambda + Textract -> DynamoDB -> SNS. Custom metrics are emitted by the functions in CloudWatch Embedded Metric Format."}},
+              {"type": "metric", "x": 0, "y": 2, "width": 8, "height": 6,
+               "properties": {"title": "Documents", "region": "${AWS::Region}", "view": "timeSeries", "stat": "Sum", "period": 300,
+                "metrics": [
+                  ["Parchi", "UploadsRequested", "Stage", "${Stage}", {"label": "Upload URLs issued"}],
+                  ["Parchi", "DocumentsProcessed", "Stage", "${Stage}", {"label": "Filed"}],
+                  ["Parchi", "DocumentsFailed", "Stage", "${Stage}", {"label": "Failed"}],
+                  ["Parchi", "QuotaRejected", "Stage", "${Stage}", {"label": "Rejected by daily cap"}]
+                ]}},
+              {"type": "metric", "x": 8, "y": 2, "width": 8, "height": 6,
+               "properties": {"title": "Pipeline latency (ms)", "region": "${AWS::Region}", "view": "timeSeries", "period": 300,
+                "metrics": [
+                  ["Parchi", "EndToEndLatency", "Stage", "${Stage}", {"stat": "p50", "label": "Upload to filed, p50"}],
+                  ["Parchi", "EndToEndLatency", "Stage", "${Stage}", {"stat": "p90", "label": "Upload to filed, p90"}],
+                  ["Parchi", "ExtractionLatency", "Stage", "${Stage}", {"stat": "p50", "label": "Textract call, p50"}],
+                  ["Parchi", "QueueDelay", "Stage", "${Stage}", {"stat": "p50", "label": "Waiting in SQS, p50"}]
+                ]}},
+              {"type": "metric", "x": 16, "y": 2, "width": 8, "height": 6,
+               "properties": {"title": "Documents by type", "region": "${AWS::Region}", "view": "pie", "stat": "Sum", "period": 86400,
+                "metrics": [
+                  ["Parchi", "DocumentsProcessed", "Stage", "${Stage}", "DocType", "FEE_RECEIPT", {"label": "Fee receipts"}],
+                  ["Parchi", "DocumentsProcessed", "Stage", "${Stage}", "DocType", "MEDICAL_BILL", {"label": "Medical bills"}],
+                  ["Parchi", "DocumentsProcessed", "Stage", "${Stage}", "DocType", "INVOICE", {"label": "Invoices"}],
+                  ["Parchi", "DocumentsProcessed", "Stage", "${Stage}", "DocType", "OTHER", {"label": "Other"}]
+                ]}},
+              {"type": "metric", "x": 0, "y": 8, "width": 8, "height": 6,
+               "properties": {"title": "Ingest queue", "region": "${AWS::Region}", "view": "timeSeries", "stat": "Maximum", "period": 60,
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${IngestQueueName}", {"label": "Waiting"}],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName", "${IngestQueueName}", {"label": "In flight"}],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${DeadLetterQueueName}", {"label": "Dead letters"}],
+                  ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "${IngestQueueName}", {"label": "Oldest (s)", "yAxis": "right"}]
+                ]}},
+              {"type": "metric", "x": 8, "y": 8, "width": 8, "height": 6,
+               "properties": {"title": "Processor Lambda", "region": "${AWS::Region}", "view": "timeSeries", "period": 60,
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "${ProcessorFunction}", {"stat": "Sum"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${ProcessorFunction}", {"stat": "Sum"}],
+                  ["AWS/Lambda", "Throttles", "FunctionName", "${ProcessorFunction}", {"stat": "Sum"}],
+                  ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", "${ProcessorFunction}", {"stat": "Maximum", "label": "Concurrency (scales with the queue)", "yAxis": "right"}]
+                ]}},
+              {"type": "metric", "x": 16, "y": 8, "width": 8, "height": 6,
+               "properties": {"title": "API and extraction quality", "region": "${AWS::Region}", "view": "timeSeries", "period": 300,
+                "metrics": [
+                  ["AWS/ApiGateway", "Count", "ApiId", "${HttpApi}", "Stage", "$default", {"stat": "Sum", "label": "API requests"}],
+                  ["AWS/ApiGateway", "5xx", "ApiId", "${HttpApi}", "Stage", "$default", {"stat": "Sum", "label": "API 5xx"}],
+                  ["Parchi", "ExtractionConfidence", "Stage", "${Stage}", {"stat": "Average", "label": "Avg confidence (%)", "yAxis": "right"}],
+                  ["Parchi", "NeedsReview", "Stage", "${Stage}", {"stat": "Sum", "label": "Flagged for review"}]
+                ]}}
+            ]
+          }
+        - IngestQueueName: !GetAtt IngestQueue.QueueName
+          DeadLetterQueueName: !GetAtt IngestDeadLetterQueue.QueueName
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Condition: HasAlertEmail
+    Properties:
+      Budget:
+        BudgetName: !Sub "parchi-${Stage}-monthly"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  AppUrl:
+    Description: Open this in a browser
+    Value: !Sub "https://${Distribution.DomainName}"
+  ApiUrl:
+    Description: The API's own endpoint (the dashboard calls it through CloudFront at /api)
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+  SiteBucketName:
+    Description: Upload the built dashboard here
+    Value: !Ref SiteBucket
+  DistributionId:
+    Description: Invalidate this after uploading a new dashboard build
+    Value: !Ref Distribution
+  UploadBucketName:
+    Value: !Ref UploadBucket
+  TableName:
+    Value: !Ref DocumentsTable
+  TopicArn:
+    Value: !Ref NotificationsTopic
+  IngestQueueUrl:
+    Value: !Ref IngestQueue
+  DeadLetterQueueUrl:
+    Value: !Ref IngestDeadLetterQueue
+  DashboardUrl:
+    Description: CloudWatch dashboard for the pipeline
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${Dashboard}"

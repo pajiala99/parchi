@@ -1,0 +1,22 @@
+# sam build && sam deploy reads these defaults; scripts/deploy.sh overrides stage/region.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "parchi-dev"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+region = "ap-south-1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+resolve_s3 = true
+s3_prefix = "parchi-dev"
+fail_on_empty_changeset = false
+parameter_overrides = "Stage=\"dev\""
+tags = "project=\"parchi\" course=\"UCS531\""

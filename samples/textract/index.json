@@ -1,0 +1,8 @@
+{
+  "64f592b91c9853d4be2a5f747c327dc9036d6eb09bada588c56e4c92ca53a225": "fee-receipt.json",
+  "e9790b6079f9358b5cccc23788a145a5e72b8808ed5b195ff02aed90c5896000": "pharmacy-bill.json",
+  "8e7fe9b12552feb7534cf3927a020e029b3cd546a8bb444f4f80b11fd5148531": "tax-invoice.json",
+  "fe727a8200173050ccb9dd9c76cb8ec16966800d4a7e6be876724f0cdc530ba6": "canteen-receipt.json",
+  "0da683bed66de3ada28f60586e7ba902aeaf31b2a4569dee127b85cdd633fa4e": "clinic-bill.json",
+  "ac4be380eca447bd7a8814a3885b1f43912800c8c7aa17e73c515640e4a72f29": "pharmacy-bill-photo.json"
+}

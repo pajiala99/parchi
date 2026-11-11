@@ -1,0 +1,27 @@
+[project]
+name = "parchi"
+version = "1.0.0"
+description = "Serverless event-driven document processing pipeline on AWS (UCS531 Cloud Computing)"
+requires-python = ">=3.12"
+license = "MIT"
+
+[tool.pytest.ini_options]
+pythonpath = ["backend/src", "backend/tests", "."]
+testpaths = ["backend/tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["backend/src/parchi"]
+omit = ["*/tests/*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["backend/src", "backend/tests", "local"]
+extend-exclude = ["frontend", ".aws-sam"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# ₹, × and – are deliberate: they appear on real Indian bills.
+ignore = ["RUF001", "RUF002", "RUF003"]

@@ -1,0 +1,50 @@
+{
+  "fee-receipt.png": {
+    "docType": "FEE_RECEIPT",
+    "vendor": "NORTHFIELD INSTITUTE OF TECHNOLOGY",
+    "documentDate": "2026-07-14",
+    "invoiceNumber": "NIT/FR/2026/08817",
+    "total": "191200.00",
+    "tax": null
+  },
+  "pharmacy-bill.png": {
+    "docType": "MEDICAL_BILL",
+    "vendor": "SANJEEVANI MEDICOS",
+    "documentDate": "2026-11-08",
+    "invoiceNumber": "SM/2611/0457",
+    "total": "607.42",
+    "tax": "28.92"
+  },
+  "tax-invoice.png": {
+    "docType": "INVOICE",
+    "vendor": "KAVERI CLOUD SUPPLIES PVT. LTD.",
+    "documentDate": "2026-11-03",
+    "invoiceNumber": "KCS/26-27/0423",
+    "total": "21533.82",
+    "tax": "3284.82"
+  },
+  "canteen-receipt.png": {
+    "docType": "OTHER",
+    "vendor": "THE CORNER CANTEEN",
+    "documentDate": "2026-11-05",
+    "invoiceNumber": "0427",
+    "total": "210.00",
+    "tax": null
+  },
+  "clinic-bill.pdf": {
+    "docType": "MEDICAL_BILL",
+    "vendor": "CITY CARE CLINIC",
+    "documentDate": "2026-11-09",
+    "invoiceNumber": "CCC/OPD/5521",
+    "total": "1100.00",
+    "tax": null
+  },
+  "pharmacy-bill-photo.jpg": {
+    "docType": "MEDICAL_BILL",
+    "vendor": "SANJEEVANI MEDICOS",
+    "documentDate": "2026-11-08",
+    "invoiceNumber": "SM/2611/0457",
+    "total": "607.42",
+    "tax": "28.92"
+  }
+}
