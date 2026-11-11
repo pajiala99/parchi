@@ -15,6 +15,7 @@ jobs:
   backend:
     name: Backend (lint, template, tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -24,7 +25,13 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       # The offline OCR engine shells out to Tesseract; without it two tests are skipped.
       - name: Install Tesseract
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update  # skip the slow man page rebuild
+          sudo apt-get update -q
+          sudo -E apt-get install -y -q --no-install-recommends tesseract-ocr
+          tesseract --version
       - name: Install dependencies
         run: pip install -r backend/requirements-dev.txt
       - name: Lint
@@ -39,6 +46,7 @@ jobs:
   frontend:
     name: Frontend (tests, typecheck, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
