@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type DocType, type Health, type Stats, uploadFile } from "../api";
+import { api, type DocType, type Health, ocrName, type Stats, uploadFile } from "../api";
 import { PipelineStrip } from "../components/Pipeline";
 import { Uploader } from "../components/Uploader";
 import {
@@ -119,8 +119,8 @@ export function Dashboard({ health }: { health: Health | null }) {
             Every <em>parchi</em>, read and filed, with no server in sight.
           </h1>
           <p className="lede">
-            Upload a fee receipt, medical bill or invoice. S3 fires an event, a Lambda function asks Textract to read
-            it, the fields are checked and filed in DynamoDB, and SNS emails you a confirmation.
+            Upload a fee receipt, medical bill or invoice. S3 fires an event, a Lambda function asks {ocrName(health?.engine)}{" "}
+            to read it, the fields are checked and filed in DynamoDB, and SNS emails you a confirmation.
           </p>
           <Uploader maxBytes={maxBytes} onFiles={start} onReject={setNotice} />
           {notice && <div className="notice err">{notice}</div>}
@@ -131,7 +131,7 @@ export function Dashboard({ health }: { health: Health | null }) {
       <PipelineStrip
         doc={latest}
         uploadedHere={latest ? uploadedHere.has(latest.documentId) : false}
-        engine={health?.engine ?? "textract"}
+        engine={health?.engine ?? ""}
       />
 
       <div className="ledger-head">

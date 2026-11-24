@@ -50,7 +50,7 @@ export default function App() {
         </div>
       </header>
       <main className="shell">
-        {route.name === "doc" ? <DocumentView id={route.id} /> : route.name === "how" ? <HowItWorks /> : <Dashboard health={health} />}
+        {route.name === "doc" ? <DocumentView id={route.id} /> : route.name === "how" ? <HowItWorks engine={health?.engine} /> : <Dashboard health={health} />}
       </main>
       <footer>
         Parchi · UCS531 Cloud Computing project, Thapar Institute of Engineering &amp; Technology · Hardik Pajiala,

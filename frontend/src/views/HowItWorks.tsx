@@ -1,3 +1,5 @@
+import { ocrName } from "../api";
+
 // The architecture explained on the page itself, for demos and the viva.
 
 const NODES = [
@@ -9,7 +11,6 @@ const NODES = [
   { id: "s3", x: 215, y: 300, title: "S3 uploads", sub: "private, SSE, CORS" },
   { id: "sqs", x: 410, y: 300, title: "SQS", sub: "ingest queue + DLQ" },
   { id: "worker", x: 605, y: 300, title: "Lambda worker", sub: "processor, ≤5 at once" },
-  { id: "ocr", x: 605, y: 410, title: "Textract", sub: "AnalyzeExpense" },
   { id: "sns", x: 820, y: 360, title: "SNS", sub: "per-owner filter" },
 ] as const;
 
@@ -41,7 +42,16 @@ const COST = [
   ["CloudFront", "a few MB of dashboard and API traffic", "< $0.01"],
 ];
 
-export function HowItWorks() {
+export function HowItWorks({ engine }: { engine?: string }) {
+  const tesseract = engine === "tesseract";
+  const ocr = ocrName(engine ?? "textract");
+  const nodes = [
+    ...NODES,
+    { id: "ocr", x: 605, y: 410, title: ocr, sub: tesseract ? "inside the worker image" : "AnalyzeExpense" },
+  ];
+  const cost = tesseract
+    ? [["Tesseract OCR (open source)", "runs inside the worker Lambda, no per-page fee", "$0.00"], ...COST.slice(1)]
+    : COST;
   return (
     <div className="how">
       <h1>How Parchi works</h1>
@@ -83,7 +93,7 @@ export function HowItWorks() {
             ✉ to you
           </text>
           <path className="edge async" d="M900,418 L900,432" markerEnd="url(#arrow-async)" />
-          {NODES.map((node) => (
+          {nodes.map((node) => (
             <g key={node.id} className={`node${node.id === "browser" ? "" : " aws"}`}>
               <rect x={node.x} y={node.y} width={W} height={H} rx="10" />
               <text x={node.x + 12} y={node.y + 24}>
@@ -116,11 +126,21 @@ export function HowItWorks() {
         </li>
         <li>
           <b>Lambda scales with the queue.</b> The event source mapping hands the worker batches of up to five
-          messages and runs at most five copies at once, which keeps Textract under its request quota.
+          messages and runs at most five copies at once, which keeps the OCR step under control.
         </li>
         <li>
-          <b>Textract reads the bill.</b> AnalyzeExpense returns vendor, date, totals, tax lines and line items with
-          confidences. Parchi picks the right candidates (CGST + SGST, Grand Total over Total Qty).
+          {tesseract ? (
+            <>
+              <b>Tesseract reads the bill.</b> The worker is a container image (stored in ECR) that carries the
+              open-source Tesseract OCR; Parchi turns its text into vendor, date, totals, tax lines and line items
+              with confidences.
+            </>
+          ) : (
+            <>
+              <b>Textract reads the bill.</b> AnalyzeExpense returns vendor, date, totals, tax lines and line items
+              with confidences.
+            </>
+          )} Parchi picks the right candidates (CGST + SGST, Grand Total over Total Qty).
         </li>
         <li>
           <b>Checked and filed.</b> The GSTIN checksum, subtotal + tax = total and a plausible date are verified;
@@ -141,7 +161,7 @@ export function HowItWorks() {
           <h3>What 1,000 documents cost</h3>
           <table className="cost">
             <tbody>
-              {COST.map(([service, basis, cost]) => (
+              {cost.map(([service, basis, price]) => (
                 <tr key={service}>
                   <td>
                     {service}
@@ -149,17 +169,20 @@ export function HowItWorks() {
                       {basis}
                     </div>
                   </td>
-                  <td className="r">{cost}</td>
+                  <td className="r">{price}</td>
                 </tr>
               ))}
               <tr className="total">
                 <td>Total, about</td>
-                <td className="r">$10.10</td>
+                <td className="r">{tesseract ? "$0.10" : "$10.10"}</td>
               </tr>
             </tbody>
           </table>
           <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
-            Approximate on-demand list prices (us-east-1, late 2026; ap-south-1 is similar). OCR is ~99% of the bill;
+            Approximate on-demand list prices (us-east-1, late 2026; ap-south-1 is similar).{" "}
+            {tesseract
+              ? "With Tesseract there is no OCR fee, so the cost is a few cents of Lambda time and requests;"
+              : "OCR is ~99% of the bill;"}{" "}
             with nothing uploaded the stack costs nothing beyond a few cents of storage.
           </p>
         </div>

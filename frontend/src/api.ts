@@ -233,3 +233,11 @@ export async function uploadFile(file: File, onProgress: (fraction: number) => v
   onProgress(1);
   return documentId;
 }
+
+/** Display name of the OCR engine the backend runs (from /api/health or a document). */
+export function ocrName(engine?: string | null): string {
+  if (engine === "tesseract") return "Tesseract";
+  if (engine === "replay") return "Textract (replay)";
+  if (engine === "textract") return "Textract";
+  return "the OCR engine";
+}

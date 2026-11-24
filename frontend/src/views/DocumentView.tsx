@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, ApiError, type DocDetail, type DocType, type Editable } from "../api";
+import { api, ApiError, type DocDetail, type DocType, type Editable, ocrName } from "../api";
 import { DOC_TYPES, displayDate, duration, isBusy, money, percent, relativeTime, STAGE_LABELS, stageOf } from "../format";
 import { usePolling } from "../hooks";
 
@@ -120,7 +120,7 @@ export function DocumentView({ id }: { id: string }) {
           <Timeline doc={data} />
           {!!data.otherFields?.length && (
             <div className="panel card">
-              <h3>Other details Textract found</h3>
+              <h3>Other details {ocrName(data.engine)} found</h3>
               <dl className="fields" style={{ margin: 0 }}>
                 {data.otherFields.map((field, index) => (
                   <Field key={index} label={field.label}>
@@ -360,7 +360,7 @@ function Items({ doc }: { doc: DocDetail }) {
 }
 
 function Timeline({ doc }: { doc: DocDetail }) {
-  const engine = doc.engine === "tesseract" ? "Tesseract" : doc.engine === "replay" ? "Textract (replay)" : "Textract";
+  const engine = ocrName(doc.engine ?? "textract");
   const failed = doc.status === "FAILED";
   const steps = [
     { label: "Upload URL issued", service: "API Gateway + Lambda", at: doc.createdAt, done: true },
