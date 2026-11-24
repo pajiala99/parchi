@@ -6,6 +6,9 @@
 
 UCS531 Cloud Computing project · Thapar Institute of Engineering & Technology, Patiala.
 
+**Live site:** [parchi-theta.vercel.app](https://parchi-theta.vercel.app) — the React dashboard hosted on Vercel. It is the
+frontend only: the AWS backend is not deployed there, so uploads need the [offline demo](#run-it-locally) or an AWS deploy.
+
 Upload a bill and a chain of managed AWS services reads it, checks it, files it and emails you a confirmation.
 **No server exists at any point**: S3 fires an event, SQS queues it, a Lambda function reads the bill with Amazon
 Textract, DynamoDB files the result and SNS sends the email. Everything is infrastructure as code in one
