@@ -10,7 +10,7 @@ Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: {default: Deployment}
-        Parameters: [Stage, ExistingLambdaRoleArn]
+        Parameters: [Stage, ExistingLambdaRoleArn, OcrEngine, ExtraAllowedOrigin]
       - Label: {default: Cost guard rails}
         Parameters:
           - DailyUploadLimitPerWorkspace
@@ -69,8 +69,23 @@ Parameters:
     Default: 0
     MinValue: 0
     Description: Delete uploaded files after this many days (0 keeps them).
+  OcrEngine:
+    Type: String
+    Default: textract
+    AllowedValues: [textract, replay]
+    Description: >-
+      How the worker reads documents. "replay" returns saved results for the bundled sample
+      bills only, for accounts where Textract is not allowed (AWS Academy, the AWS Free plan).
+  ExtraAllowedOrigin:
+    Type: String
+    Default: ""
+    AllowedPattern: "^(https://[a-z0-9.-]+)?$"
+    Description: >-
+      Optional. Another site that may upload to the bucket, such as a Vercel copy of the
+      dashboard that proxies /api to this stack (e.g. https://parchi-theta.vercel.app).
 
 Conditions:
+  HasExtraOrigin: !Not [!Equals [!Ref ExtraAllowedOrigin, ""]]
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
   UseExistingRole: !Not [!Equals [!Ref ExistingLambdaRoleArn, ""]]
   CreateRoles: !Equals [!Ref ExistingLambdaRoleArn, ""]
@@ -95,7 +110,7 @@ Globals:
         UPLOAD_BUCKET: !Sub "parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}"
         TOPIC_ARN: !Ref NotificationsTopic
         INGEST_QUEUE_URL: !Ref IngestQueue
-        OCR_ENGINE: textract
+        OCR_ENGINE: !Ref OcrEngine
         MAX_UPLOAD_MB: !Ref MaxUploadMB
         DAILY_UPLOAD_LIMIT_WORKSPACE: !Ref DailyUploadLimitPerWorkspace
         DAILY_UPLOAD_LIMIT_GLOBAL: !Ref DailyUploadLimitGlobal
@@ -146,6 +161,7 @@ Resources:
             AllowedOrigins:
               - !Sub "https://${Distribution.DomainName}"
               - http://localhost:5173
+              - !If [HasExtraOrigin, !Ref ExtraAllowedOrigin, !Ref "AWS::NoValue"]
             AllowedHeaders: ["*"]
             MaxAge: 3000
       LifecycleConfiguration:

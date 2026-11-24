@@ -10,3 +10,5 @@ frontend/public/samples/
 .claude/
 samples/evaluation.json
 .DS_Store
+.vercel
+backend/src/parchi/engines/replay_samples/

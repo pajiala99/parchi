@@ -13,6 +13,8 @@ STAGE="dev"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-south-1}}"
 ALERT_EMAIL=""
 LAMBDA_ROLE=""
+EXTRA_ORIGIN=""
+OCR_ENGINE=""
 DO_STACK=1
 DO_SITE=1
 
@@ -25,6 +27,8 @@ Options:
   -r, --region REGION     AWS region (default: $AWS_REGION, else ap-south-1)
   -e, --alert-email ADDR  receive alarms and the monthly budget alert
       --lambda-role ARN   run every function with this role instead of creating roles
+      --extra-origin URL  also let this site upload (e.g. https://parchi-theta.vercel.app)
+      --ocr-engine NAME   textract (default) or replay (sample bills only, no Textract needed)
       --stack-only        deploy the backend, leave the dashboard as it is
       --site-only         publish the dashboard to an already deployed stack
   -h, --help              show this help
@@ -46,6 +50,8 @@ while [[ $# -gt 0 ]]; do
     -r | --region) need_value "$@"; REGION="$2"; shift 2 ;;
     -e | --alert-email) need_value "$@"; ALERT_EMAIL="$2"; shift 2 ;;
     --lambda-role) need_value "$@"; LAMBDA_ROLE="$2"; shift 2 ;;
+    --extra-origin) need_value "$@"; EXTRA_ORIGIN="$2"; shift 2 ;;
+    --ocr-engine) need_value "$@"; OCR_ENGINE="$2"; shift 2 ;;
     --stack-only) DO_SITE=0; shift ;;
     --site-only) DO_STACK=0; shift ;;
     -h | --help) usage; exit 0 ;;
@@ -78,6 +84,11 @@ if [[ $DO_STACK -eq 1 ]]; then
   overrides=("Stage=$STAGE")
   [[ -n "$ALERT_EMAIL" ]] && overrides+=("AlertEmail=$ALERT_EMAIL")
   [[ -n "$LAMBDA_ROLE" ]] && overrides+=("ExistingLambdaRoleArn=$LAMBDA_ROLE")
+  [[ -n "$EXTRA_ORIGIN" ]] && overrides+=("ExtraAllowedOrigin=$EXTRA_ORIGIN")
+  [[ -n "$OCR_ENGINE" ]] && overrides+=("OcrEngine=$OCR_ENGINE")
+  # Ship the replay fixtures inside the Lambda package (used when OcrEngine=replay).
+  rm -rf backend/src/parchi/engines/replay_samples
+  cp -R samples/textract backend/src/parchi/engines/replay_samples
   sam build
   sam deploy --stack-name "$STACK" --s3-prefix "$STACK" --region "$REGION" \
     --parameter-overrides "${overrides[@]}"

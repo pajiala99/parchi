@@ -47,6 +47,11 @@ scripts/deploy.sh -r us-east-1 --lambda-role arn:aws:iam::$ACCOUNT:role/LabRole
 
 Budgets may be unavailable there; leave `-e` off if the deploy fails on `MonthlyBudget`.
 
+Academy roles (and the AWS Free account plan) cannot call Textract. Add `--ocr-engine replay`: the worker then
+returns saved AnalyzeExpense responses for the bundled sample bills, so the rest of the pipeline runs for real.
+To let the Vercel copy of the dashboard upload, add `--extra-origin https://<your-site>.vercel.app` and a
+`/api/:path*` rewrite to the CloudFront URL in `vercel.json`.
+
 ## Check that it works
 
 1. Open the app URL and upload a sample bill ("Try a sample").
