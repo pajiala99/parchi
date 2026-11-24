@@ -10,7 +10,7 @@ Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: {default: Deployment}
-        Parameters: [Stage, ExistingLambdaRoleArn, OcrEngine, ExtraAllowedOrigin]
+        Parameters: [Stage, ExistingLambdaRoleArn]
       - Label: {default: Cost guard rails}
         Parameters:
           - DailyUploadLimitPerWorkspace
@@ -69,24 +69,8 @@ Parameters:
     Default: 0
     MinValue: 0
     Description: Delete uploaded files after this many days (0 keeps them).
-  OcrEngine:
-    Type: String
-    Default: textract
-    AllowedValues: [textract, tesseract, replay]
-    Description: >-
-      How the worker reads documents. "tesseract" runs the open-source Tesseract OCR inside the
-      worker's container (free, for accounts where Textract is not allowed, such as AWS Academy
-      or the AWS Free plan); "replay" returns saved results for the bundled sample bills only.
-  ExtraAllowedOrigin:
-    Type: String
-    Default: ""
-    AllowedPattern: "^(https://[a-z0-9.-]+)?$"
-    Description: >-
-      Optional. Another site that may upload to the bucket, such as a Vercel copy of the
-      dashboard that proxies /api to this stack (e.g. https://parchi-theta.vercel.app).
 
 Conditions:
-  HasExtraOrigin: !Not [!Equals [!Ref ExtraAllowedOrigin, ""]]
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
   UseExistingRole: !Not [!Equals [!Ref ExistingLambdaRoleArn, ""]]
   CreateRoles: !Equals [!Ref ExistingLambdaRoleArn, ""]
@@ -98,7 +82,9 @@ Conditions:
 # functions to the bucket would close that loop into a circular dependency.
 Globals:
   Function:
+    Runtime: python3.13
     Architectures: [arm64]
+    CodeUri: backend/src/
     MemorySize: 256
     Timeout: 10
     Tracing: Active
@@ -109,7 +95,7 @@ Globals:
         UPLOAD_BUCKET: !Sub "parchi-${Stage}-uploads-${AWS::AccountId}-${AWS::Region}"
         TOPIC_ARN: !Ref NotificationsTopic
         INGEST_QUEUE_URL: !Ref IngestQueue
-        OCR_ENGINE: !Ref OcrEngine
+        OCR_ENGINE: textract
         MAX_UPLOAD_MB: !Ref MaxUploadMB
         DAILY_UPLOAD_LIMIT_WORKSPACE: !Ref DailyUploadLimitPerWorkspace
         DAILY_UPLOAD_LIMIT_GLOBAL: !Ref DailyUploadLimitGlobal
@@ -160,7 +146,6 @@ Resources:
             AllowedOrigins:
               - !Sub "https://${Distribution.DomainName}"
               - http://localhost:5173
-              - !If [HasExtraOrigin, !Ref ExtraAllowedOrigin, !Ref "AWS::NoValue"]
             AllowedHeaders: ["*"]
             MaxAge: 3000
       LifecycleConfiguration:
@@ -295,8 +280,6 @@ Resources:
     Properties:
       Description: Issues a presigned S3 POST for each new document
       Handler: parchi.handlers.uploads.handler
-      Runtime: python3.13
-      CodeUri: backend/src/
       Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt UploadsRole.Arn]
       Events:
         CreateUpload:
@@ -308,8 +291,6 @@ Resources:
     Properties:
       Description: Lists, shows, corrects, reprocesses and deletes documents; workspace stats
       Handler: parchi.handlers.documents.handler
-      Runtime: python3.13
-      CodeUri: backend/src/
       Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt DocumentsRole.Arn]
       Events:
         Health:
@@ -339,8 +320,6 @@ Resources:
     Properties:
       Description: Subscribes the workspace's email to SNS with an owner filter policy
       Handler: parchi.handlers.subscription.handler
-      Runtime: python3.13
-      CodeUri: backend/src/
       Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt SubscriptionRole.Arn]
       Events:
         GetSubscription:
@@ -356,11 +335,10 @@ Resources:
   ProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Reads each uploaded document (Textract, Tesseract or replay), files it in DynamoDB and notifies via SNS
-      # A container image so it can carry the Tesseract binary (backend/processor.Dockerfile).
-      PackageType: Image
+      Description: Reads each uploaded document with Textract, files it in DynamoDB and notifies via SNS
+      Handler: parchi.handlers.processor.handler
       Role: !If [UseExistingRole, !Ref ExistingLambdaRoleArn, !GetAtt ProcessorRole.Arn]
-      MemorySize: 1024
+      MemorySize: 512
       Timeout: 90
       Environment:
         Variables:
@@ -376,10 +354,6 @@ Resources:
             FunctionResponseTypes: [ReportBatchItemFailures]
             ScalingConfig:
               MaximumConcurrency: !Ref ProcessorMaxConcurrency
-    Metadata:
-      DockerContext: .
-      Dockerfile: backend/processor.Dockerfile
-      DockerTag: processor
 
   UploadsLogs:
     Type: AWS::Logs::LogGroup

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 from pathlib import Path
 
 import pytest
@@ -44,18 +43,9 @@ def _functions(template):
     }
 
 
-def _handler(template, name, properties):
-    """Zip functions name their handler; the image function's is the Dockerfile's CMD."""
-    if "Handler" in properties:
-        return properties["Handler"]
-    dockerfile = TEMPLATE.parent / template["Resources"][name]["Metadata"]["Dockerfile"]
-    cmd = next(line for line in dockerfile.read_text().splitlines() if line.startswith("CMD"))
-    return json.loads(cmd[3:])[0]
-
-
 def test_every_route_in_the_template_is_handled_in_code(template):
     for name, properties in _functions(template).items():
-        module_name, _, attribute = _handler(template, name, properties).rpartition(".")
+        module_name, _, attribute = properties["Handler"].rpartition(".")
         module = importlib.import_module(module_name)
         assert callable(getattr(module, attribute)), name
         routes = {
