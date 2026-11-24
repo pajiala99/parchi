@@ -5,7 +5,7 @@
 - An AWS account (a normal account on the free tier, or AWS Academy Learner Lab)
 - [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html), configured (`aws configure` or SSO)
 - [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)
-- Python 3.13 (for `sam build`) and Node.js 20+ (for the dashboard)
+- Python 3.13 (for `sam build`), Node.js 20+ (for the dashboard) and Docker running (the worker Lambda is a container image; `sam build` builds it and `sam deploy` pushes it to ECR)
 
 Check credentials with `aws sts get-caller-identity`.
 
@@ -47,8 +47,10 @@ scripts/deploy.sh -r us-east-1 --lambda-role arn:aws:iam::$ACCOUNT:role/LabRole
 
 Budgets may be unavailable there; leave `-e` off if the deploy fails on `MonthlyBudget`.
 
-Academy roles (and the AWS Free account plan) cannot call Textract. Add `--ocr-engine replay`: the worker then
-returns saved AnalyzeExpense responses for the bundled sample bills, so the rest of the pipeline runs for real.
+Academy roles (and the AWS Free account plan) cannot call Textract. Add `--ocr-engine tesseract`: the worker's
+container image (`backend/processor.Dockerfile`) includes the open-source Tesseract OCR, so any bill is read for
+free (less accurately than Textract on poor photos). `--ocr-engine replay` instead returns saved results for the
+bundled sample bills only.
 To let the Vercel copy of the dashboard upload, add `--extra-origin https://<your-site>.vercel.app` and a
 `/api/:path*` rewrite to the CloudFront URL in `vercel.json`.
 

@@ -28,7 +28,8 @@ Options:
   -e, --alert-email ADDR  receive alarms and the monthly budget alert
       --lambda-role ARN   run every function with this role instead of creating roles
       --extra-origin URL  also let this site upload (e.g. https://parchi-theta.vercel.app)
-      --ocr-engine NAME   textract (default) or replay (sample bills only, no Textract needed)
+      --ocr-engine NAME   textract (default), tesseract (free OCR in the worker's container)
+                          or replay (sample bills only)
       --stack-only        deploy the backend, leave the dashboard as it is
       --site-only         publish the dashboard to an already deployed stack
   -h, --help              show this help
@@ -66,7 +67,7 @@ STACK="parchi-$STAGE"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-for tool in aws sam; do
+for tool in aws sam docker; do
   command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 if [[ $DO_SITE -eq 1 ]]; then
@@ -86,11 +87,9 @@ if [[ $DO_STACK -eq 1 ]]; then
   [[ -n "$LAMBDA_ROLE" ]] && overrides+=("ExistingLambdaRoleArn=$LAMBDA_ROLE")
   [[ -n "$EXTRA_ORIGIN" ]] && overrides+=("ExtraAllowedOrigin=$EXTRA_ORIGIN")
   [[ -n "$OCR_ENGINE" ]] && overrides+=("OcrEngine=$OCR_ENGINE")
-  # Ship the replay fixtures inside the Lambda package (used when OcrEngine=replay).
-  rm -rf backend/src/parchi/engines/replay_samples
-  cp -R samples/textract backend/src/parchi/engines/replay_samples
   sam build
-  sam deploy --stack-name "$STACK" --s3-prefix "$STACK" --region "$REGION" \
+  # --resolve-image-repos: SAM creates the ECR repository for the processor's container image.
+  sam deploy --stack-name "$STACK" --s3-prefix "$STACK" --region "$REGION" --resolve-image-repos \
     --parameter-overrides "${overrides[@]}"
 fi
 
