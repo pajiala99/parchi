@@ -21,9 +21,7 @@ from . import PermanentError
 # In the repo the fixtures live in samples/textract; scripts/deploy.sh copies them next to
 # this file so they ship inside the Lambda package.
 _BUNDLED_DIR = Path(__file__).resolve().parent / "replay_samples"
-DEFAULT_DIR = (
-    _BUNDLED_DIR if _BUNDLED_DIR.is_dir() else Path(__file__).resolve().parents[4] / "samples" / "textract"
-)
+DEFAULT_DIR = _BUNDLED_DIR if _BUNDLED_DIR.is_dir() else Path(__file__).resolve().parents[4] / "samples" / "textract"
 
 
 class ReplayEngine:
