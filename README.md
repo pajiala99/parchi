@@ -6,6 +6,11 @@
 
 UCS531 Cloud Computing project · Thapar Institute of Engineering & Technology, Patiala.
 
+**Live:** [d3lfg9xnsywbfz.cloudfront.net](https://d3lfg9xnsywbfz.cloudfront.net) (CloudFront, the full AWS stack) and
+[parchi-theta.vercel.app](https://parchi-theta.vercel.app) (the same dashboard on Vercel, proxying `/api` to that stack).
+Running in an AWS Academy account, which does not allow Textract, so the worker Lambda reads bills with the
+open-source Tesseract OCR, packaged with it as a container image in Amazon ECR. Any bill photo or PDF works.
+
 Upload a bill and a chain of managed AWS services reads it, checks it, files it and emails you a confirmation.
 **No server exists at any point**: S3 fires an event, SQS queues it, a Lambda function reads the bill with Amazon
 Textract, DynamoDB files the result and SNS sends the email. Everything is infrastructure as code in one
@@ -133,7 +138,7 @@ scripts/deploy.sh -r us-east-1 --lambda-role arn:aws:iam::<account>:role/LabRole
 scripts/teardown.sh                                 # delete everything
 ```
 
-> **Status:** not deployed yet. The AWS Academy labs available to us are per-lesson sandboxes that block most of these services, so the project is demonstrated with the offline stack, which runs the identical handler code.
+> **Status:** deployed (stack `parchi-dev`, `us-east-1`) in an AWS Academy lab account with `--lambda-role LabRole --ocr-engine tesseract`. Academy roles cannot call Textract (or AWS Budgets), so the worker runs Tesseract inside its container image instead; S3, SQS, Lambda, ECR, DynamoDB, SNS, API Gateway, CloudFront and CloudWatch are all real. On an account with Textract, deploy without `--ocr-engine`. Academy credentials expire with the lab session, and the lab account may be reset when the course ends.
 
 ## Tests
 
