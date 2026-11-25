@@ -73,3 +73,15 @@ To let the Vercel copy of the dashboard upload, add `--extra-origin https://<you
 ```bash
 scripts/teardown.sh            # empties both buckets, then sam delete
 ```
+
+## AWS Academy sandbox: bring it back after a lab session ends
+
+An Academy sandbox deletes every resource when the lab session ends, so the site shows "API offline" and the
+CloudFront address stops resolving. To bring it back:
+
+1. Start the lab, wait for the green dot, open **AWS Details → AWS CLI → Show** and copy the block.
+2. `pbpaste > ~/.aws/credentials` (if the first line comes out as `default]`, the script fixes it).
+3. With Docker Desktop running: `scripts/academy-up.sh`
+
+It deploys the whole stack (about 10 minutes), points `vercel.json` at the new CloudFront address, redeploys the
+Vercel site and checks `/api/health`. Commit the changed `vercel.json` and `README.md` afterwards.

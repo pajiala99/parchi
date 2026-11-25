@@ -5,6 +5,6 @@
   "buildCommand": "cd frontend && npm run build",
   "outputDirectory": "frontend/dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://d2is32h4p0xw22.cloudfront.net/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://d2b1610gcclou3.cloudfront.net/api/:path*" }
   ]
 }

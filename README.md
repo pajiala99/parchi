@@ -6,7 +6,7 @@
 
 UCS531 Cloud Computing project · Thapar Institute of Engineering & Technology, Patiala.
 
-**Live:** [d2is32h4p0xw22.cloudfront.net](https://d2is32h4p0xw22.cloudfront.net) (CloudFront, the full AWS stack) and
+**Live:** [d2b1610gcclou3.cloudfront.net](https://d2b1610gcclou3.cloudfront.net) (CloudFront, the full AWS stack) and
 [parchi-theta.vercel.app](https://parchi-theta.vercel.app) (the same dashboard on Vercel, proxying `/api` to that stack).
 Running in an AWS Academy account, which does not allow Textract, so the worker Lambda reads bills with the
 open-source Tesseract OCR, packaged with it as a container image in Amazon ECR. Any bill photo or PDF works.
