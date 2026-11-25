@@ -8,12 +8,14 @@ UCS531 Cloud Computing project · Thapar Institute of Engineering & Technology, 
 
 **Live:** [d2b1610gcclou3.cloudfront.net](https://d2b1610gcclou3.cloudfront.net) (CloudFront, the full AWS stack) and
 [parchi-theta.vercel.app](https://parchi-theta.vercel.app) (the same dashboard on Vercel, proxying `/api` to that stack).
-Running in an AWS Academy account, which does not allow Textract, so the worker Lambda reads bills with the
-open-source Tesseract OCR, packaged with it as a container image in Amazon ECR. Any bill photo or PDF works.
+Running in an AWS Academy sandbox. The worker Lambda reads bills with the open-source **Tesseract** OCR, packaged
+with it as a container image in Amazon ECR, because Academy accounts cannot call Amazon Textract. Any bill photo or
+PDF works. Academy wipes the sandbox when a lab session ends, so the site can show "API offline" until it is
+rebuilt with one command ([how](#live-deployment-aws-academy)).
 
 Upload a bill and a chain of managed AWS services reads it, checks it, files it and emails you a confirmation.
-**No server exists at any point**: S3 fires an event, SQS queues it, a Lambda function reads the bill with Amazon
-Textract, DynamoDB files the result and SNS sends the email. Everything is infrastructure as code in one
+**No server exists at any point**: S3 fires an event, SQS queues it, a Lambda function reads the bill with OCR
+(Tesseract in a container image, or Amazon Textract), DynamoDB files the result and SNS sends the email. Everything is infrastructure as code in one
 [`template.yaml`](template.yaml).
 
 **Try it in one command, no AWS account needed:** `scripts/demo.sh` runs the same Lambda code against an AWS
@@ -23,11 +25,12 @@ emulator and opens the dashboard ([details](#run-it-locally)).
 
 *Five sample bills filed in the offline stack: each went browser → S3 → SQS → Lambda → OCR → DynamoDB → SNS in under half a second.*
 
-`AWS Lambda` · `API Gateway` · `S3` · `SQS` · `DynamoDB` · `Amazon Textract` · `SNS` · `CloudFront` · `CloudWatch` · `AWS SAM` · `Python 3.13` · `React 19` · `TypeScript` · `moto` · `pytest` · `GitHub Actions`
+`AWS Lambda` · `API Gateway` · `S3` · `SQS` · `DynamoDB` · `Amazon ECR` · `SNS` · `CloudFront` · `CloudWatch` · `AWS SAM` · `Tesseract OCR` · `Docker` · `Python 3.13` · `React 19` · `TypeScript` · `moto` · `pytest` · `GitHub Actions`
 
 What it covers, end to end:
 
 - **Event-driven serverless architecture**: presigned uploads straight to S3, S3 → SQS → Lambda, nothing running between events
+- **Pluggable OCR**: open-source Tesseract inside a container-image Lambda (live), or Amazon Textract AnalyzeExpense, chosen by one deploy parameter
 - **Reliability**: idempotent processing under at-least-once delivery, per-message retries, a dead-letter queue with alarms
 - **Real document understanding for Indian bills**: lakh-grouped rupees, CGST + SGST, GSTIN checksums, totals that must reconcile, an explainable fee-receipt / medical-bill / invoice classifier
 - **Security and cost controls**: least-privilege IAM per function, private encrypted buckets, daily upload caps in a DynamoDB transaction, a budget alert
@@ -47,7 +50,7 @@ flowchart LR
   B -->|"② presigned POST"| S3[("S3 uploads")]
   S3 -. "③ ObjectCreated" .-> SQS["SQS<br/>+ dead-letter queue"]
   SQS -. "④ batches of 5" .-> W["Lambda worker"]
-  W -->|"⑤ AnalyzeExpense"| TX[Textract]
+  W -->|"⑤ read text"| TX["OCR<br/>Tesseract (container) or Textract"]
   W -->|"⑥ checked fields"| DDB
   W -. "⑦ owner filter policy" .-> SNS[SNS] -.-> MAIL["✉ email"]
 ```
@@ -55,8 +58,8 @@ flowchart LR
 1. **Ask for an upload URL.** A Lambda function validates type, size and the daily quota, writes a *waiting* record and returns a **presigned S3 POST** that S3 itself enforces (content type, ≤ 10 MB, exact key).
 2. **Upload straight to S3.** The file never passes through API Gateway or Lambda: no payload limit, no compute billed for transfers.
 3. **S3 fires an event** into an **SQS queue** that buffers bursts and retries failures; after three failed attempts the event moves to a **dead-letter queue** and an alarm fires.
-4. **Lambda scales with the queue**: batches of up to five, at most five copies at once, which keeps Textract under its request quota.
-5. **Textract AnalyzeExpense** returns vendor, date, totals, tax lines and line items with confidences; Parchi picks the right candidates (Grand Total over "Total Qty", CGST + SGST added up).
+4. **Lambda scales with the queue**: batches of up to five, at most five copies at once, which keeps the OCR step within its limits.
+5. **OCR reads the bill.** Live, the worker is a **container image in ECR** that carries **Tesseract**; Parchi turns its words and confidences into vendor, date, totals, tax lines and line items. With `--ocr-engine textract`, **Textract AnalyzeExpense** does this step instead. Either way Parchi picks the right candidates (Grand Total over "Total Qty", CGST + SGST added up).
 6. **Checked and filed**: GSTIN mod-36 checksum, subtotal + tax = total, a plausible date; anything doubtful is flagged for review. One conditional write files it in DynamoDB.
 7. **SNS emails you.** One topic serves everyone; each subscription has a **filter policy** on the `owner` message attribute, so you only get your own confirmations.
 
@@ -72,16 +75,17 @@ CloudFront serves the dashboard from a private S3 bucket (Origin Access Control)
 | Service | Role | Why this one |
 |---|---|---|
 | **S3** | uploads (private, SSE, TLS-only) and the dashboard site | presigned POSTs push policy enforcement to S3 itself |
-| **SQS** + DLQ | buffers upload events, retries, dead letters | decouples bursts from Textract's quota; nothing is lost |
-| **Lambda** (Python 3.13, arm64) | 3 API functions + 1 worker | pay per request; Graviton costs less per GB-second |
+| **SQS** + DLQ | buffers upload events, retries, dead letters | decouples bursts from the OCR step; nothing is lost |
+| **Lambda** (Python 3.13, arm64) | 3 API functions + 1 worker (container image) | pay per request; Graviton costs less per GB-second |
+| **ECR** | stores the worker's Docker image with Tesseract | Lambda runs images up to 10 GB, enough for an OCR engine |
 | **API Gateway** HTTP API | 11 routes, throttled, JSON access logs | cheaper and simpler than REST APIs for this use |
-| **Textract** AnalyzeExpense | reads receipts and invoices | purpose-built for bills: totals, tax, line items |
+| **Textract** AnalyzeExpense (optional) | reads receipts and invoices | purpose-built for bills; not available in AWS Academy, so the live stack uses Tesseract |
 | **DynamoDB** on-demand | documents, profiles, daily quotas (TTL) | single-table design; conditional writes give idempotency |
 | **SNS** | confirmation emails | filter policies give per-user delivery from one topic |
 | **CloudFront** | HTTPS, caching, one origin for site + API | edge locations in India (PriceClass_200) |
 | **IAM** | one least-privilege role per function | each function can do only what it needs |
 | **CloudWatch** | EMF custom metrics, dashboard, 4 alarms, log retention | observability without extra API calls |
-| **Budgets** | monthly cost alert (optional) | "set a billing alarm on day one" |
+| **Budgets** | monthly cost alert (optional; not in Academy) | "set a billing alarm on day one" |
 
 `template.yaml` (AWS SAM, ~45 resources after the transform) passes `cfn-lint` and `sam validate --lint`, and `sam build` succeeds.
 
@@ -89,24 +93,26 @@ CloudFront serves the dashboard from a private S3 bucket (Origin Access Control)
 
 | | |
 |---|---|
+| **Upload → filed** (live on AWS, Tesseract in Lambda) | 4.6 – 7.3 s per bill (OCR 3.8 – 6 s); ~15 s on a cold start |
 | **Upload → filed** (offline stack, Tesseract OCR) | 0.2 – 0.5 s per bill; median ≈ 0.4 s |
 | **Fields read correctly** (6 synthetic bills × 6 fields, Tesseract) | 36 / 36: type, vendor, date, reference, total, tax |
 | **Hardest sample** | a tilted, blurred, noisy phone photo of a pharmacy bill: all 6 fields correct |
 | **Backend tests** | 118, 93% coverage, including an end-to-end run over HTTP |
-| **Cost** | ≈ $10 per 1,000 documents (~99% Textract); ≈ $0 while idle |
+| **Cost** | Tesseract: ≈ $0.10 per 1,000 documents (Lambda time and requests). Textract: ≈ $10 (~99% OCR). ≈ $0 while idle |
 
 The accuracy figure is a smoke test, not a benchmark: the samples are synthetic and the heuristics were written
-against them. Textract's own accuracy can be measured once the stack is deployed. Run `local/evaluate.py` to
+against them. Run `local/evaluate.py` to
 reproduce the table.
 
 ## Engineering decisions worth talking about
 
-- **Event-driven, not request-driven.** The API only hands out upload URLs and reads results; the heavy work happens off the request path, triggered by S3 → SQS. A slow Textract call never times out a browser request.
-- **Why a queue between S3 and Lambda.** S3 can invoke Lambda directly, but Textract accepts only a few requests per second. SQS absorbs bursts, retries with a delay and keeps failures in a dead-letter queue instead of dropping them; Lambda's event source mapping scales workers with the queue, capped at five.
+- **Event-driven, not request-driven.** The API only hands out upload URLs and reads results; the heavy work happens off the request path, triggered by S3 → SQS. A slow OCR run never times out a browser request.
+- **Why a queue between S3 and Lambda.** S3 can invoke Lambda directly, but OCR is the slow, limited step (Textract accepts only a few requests per second; Tesseract needs CPU and memory). SQS absorbs bursts, retries with a delay and keeps failures in a dead-letter queue instead of dropping them; Lambda's event source mapping scales workers with the queue, capped at five.
 - **Idempotent processing.** SQS delivers at least once. The worker claims a document with a conditional write and a lease (`leaseUntil`), so a duplicate delivery finds it filed or in progress and is skipped. Failures are reported per message (`ReportBatchItemFailures`), so one bad file never makes SQS redeliver the good ones.
 - **Permanent vs transient errors.** An unreadable file fails at once with a reason (and an email). Throttling and service errors are retried; on the last attempt the document is marked failed and the event lands in the alarmed dead-letter queue.
 - **Cost guard rails.** Daily upload caps per workspace and for the whole deployment, enforced atomically by a DynamoDB transaction; the worker's concurrency is capped; an optional monthly budget alert.
 - **Explainable output.** The classifier is weighted keyword evidence and shows *why* ("pharmacy, tablets, drug licence"). Every field carries its OCR confidence; failed checks put the document in "needs review"; users can correct fields, and corrections are tracked.
+- **OCR as a swappable engine.** The worker talks to an engine interface (`engines/`: textract, tesseract, replay). When Academy blocked Textract, the fix was a Dockerfile and a deploy parameter, not a rewrite: the queue, checks, storage and emails did not change.
 - **One domain, no CORS, no circular dependencies.** CloudFront serves the site and the API. The upload bucket's name is built with `!Sub`, so the functions never reference the bucket resource (its CORS rule references CloudFront, which fronts the API, which depends on the functions).
 - **The template and the code can't drift.** A test reads `template.yaml` and checks that every route is implemented, and that retry counts, timeouts and the S3 prefix agree with the code; the local stack reads its routes from the same file.
 
@@ -138,7 +144,22 @@ scripts/deploy.sh -r us-east-1 --lambda-role arn:aws:iam::<account>:role/LabRole
 scripts/teardown.sh                                 # delete everything
 ```
 
-> **Status:** deployed (stack `parchi-dev`, `us-east-1`) in an AWS Academy lab account with `--lambda-role LabRole --ocr-engine tesseract`. Academy roles cannot call Textract (or AWS Budgets), so the worker runs Tesseract inside its container image instead; S3, SQS, Lambda, ECR, DynamoDB, SNS, API Gateway, CloudFront and CloudWatch are all real. On an account with Textract, deploy without `--ocr-engine`. Academy credentials expire with the lab session, and the lab account may be reset when the course ends.
+```bash
+scripts/deploy.sh -r us-east-1 --lambda-role arn:aws:iam::<account>:role/LabRole --ocr-engine tesseract   # without Textract
+```
+
+The worker image is built with Docker, so Docker Desktop must be running.
+
+### Live deployment (AWS Academy)
+
+The live stack (`parchi-dev`, `us-east-1`) runs in an AWS Academy sandbox with `--lambda-role LabRole --ocr-engine tesseract`.
+S3, SQS, Lambda, ECR, DynamoDB, SNS, API Gateway, CloudFront and CloudWatch are all real; Academy blocks Textract and
+Budgets, hence Tesseract. **The sandbox deletes every resource when a lab session ends**, so before a demo:
+
+1. Start the lab, wait for the green dot, open **AWS Details → AWS CLI → Show** and copy the block.
+2. `pbpaste > ~/.aws/credentials`
+3. `scripts/academy-up.sh` (about 10 minutes): deploys the stack, points `vercel.json` at the new CloudFront
+   address, redeploys the Vercel site and checks `/api/health`.
 
 ## Tests
 
@@ -168,11 +189,12 @@ CI (GitHub Actions) runs ruff, cfn-lint, pytest and the frontend tests and build
 ```
 template.yaml          AWS SAM: the whole stack
 backend/src/parchi/    Lambda code: handlers/, extraction/, engines/ (textract, tesseract, replay), store, notify
+backend/processor.Dockerfile  the worker's container image (Python + Tesseract)
 backend/tests/         pytest suite (moto, botocore Stubber, end to end over HTTP)
 frontend/              React + TypeScript + Vite dashboard (no UI kit)
 local/                 devstack.py (offline AWS), make_samples.py, evaluate.py
 samples/               synthetic bills, ground truth, simulated Textract responses
-scripts/               demo.sh (offline demo), deploy.sh, teardown.sh
+scripts/               demo.sh (offline demo), deploy.sh, academy-up.sh (Academy rebuild), teardown.sh
 docs/                  REPORT.md + PDF, DEMO.md, DEPLOY.md, architecture.png, screenshots/
 ```
 
@@ -184,7 +206,7 @@ The sample bills in [`samples/`](samples) and their Textract responses are **syn
 
 ## Limitations and next steps
 
-- **Deploy it** with a Learner Lab or a personal account and measure Textract on real bills.
+- Measure accuracy on a larger set of real bills, and compare Tesseract with Textract on an account that allows it.
 - Textract's synchronous API reads one page; multi-page PDFs need `StartExpenseAnalysis` with an SNS completion notification.
 - Workspace keys instead of accounts; Cognito is the production answer.
 - The dashboard polls; API Gateway WebSockets would push updates instead.
