@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Parchi: Deployment and Source Code</title><link rel="stylesheet" href="doc.css"></head><body>
+<h1>Parchi: Cloud Deployment and Source Code</h1>
+<div class="sub">UCS531 Cloud Computing · Hardik Pajiala · Shikhar Goel · Rumnik Dhillon · Faculty advisor: Dr. Anil Singh</div>
+<h2>3. Cloud deployment with demonstration</h2>
+<table>
+<tr><th style="width:42mm">Live application</th><td><a href="https://parchi-theta.vercel.app">https://parchi-theta.vercel.app</a></td></tr>
+<tr><th>Cloud</th><td>Amazon Web Services, AWS Academy account, region <code>us-east-1</code>, CloudFormation stack <code>parchi-dev</code> (~45 resources)</td></tr>
+<tr><th>Services used</th><td>API Gateway, Lambda (3 API functions + 1 container-image worker), S3, SQS + dead-letter queue, DynamoDB, SNS, ECR, CloudFront, CloudWatch, IAM, AWS SAM / CloudFormation</td></tr>
+<tr><th>OCR</th><td>Open-source Tesseract inside the Lambda worker's Docker image (Amazon Textract is blocked in AWS Academy)</td></tr>
+<tr><th>Deploy command</th><td><code>scripts/academy-up.sh</code>: builds and deploys the whole stack, points the website at it and checks it (about 10 minutes)</td></tr>
+<tr><th>Measured on AWS</th><td>Upload → filed in 4.6 – 7.3 s per bill; about 15 s on a cold start</td></tr>
+</table>
+<div class="note">The AWS Academy sandbox deletes all resources when a lab session ends, so the live link works while the lab is running. It is rebuilt with one command before the demonstration.</div>
+<h3>Demonstration steps</h3>
+<ol>
+<li>Open the live link; the top-right badge shows <code>dev · us-east-1 · tesseract</code>.</li>
+<li>Click a sample bill (e.g. "Pharmacy bill (photo)") and watch the live pipeline: API Gateway → S3 → SQS → Lambda → Tesseract → DynamoDB → SNS.</li>
+<li>Open the filed bill: extracted fields with confidence, classification, checks (subtotal + tax = total), line items and the per-service timeline.</li>
+<li>Settings: subscribe an email to receive SNS confirmations; "How it works" shows the architecture.</li>
+<li>AWS console: CloudFormation stack, Lambda functions (worker package type: Image), CloudWatch dashboard <code>parchi-dev-us-east-1</code>.</li>
+</ol>
+<h2>4. Source code (GitHub) with README</h2>
+<table>
+<tr><th style="width:42mm">Repository</th><td><a href="https://github.com/pajiala99/parchi">https://github.com/pajiala99/parchi</a></td></tr>
+<tr><th>Mirror</th><td><a href="https://github.com/sgoel2be24-cyber/parchi-aws">https://github.com/sgoel2be24-cyber/parchi-aws</a></td></tr>
+<tr><th>Contents</th><td>README, <code>template.yaml</code> (infrastructure as code), Python Lambda code, React dashboard, Dockerfile for the worker, deploy scripts, 118 automated tests, GitHub Actions CI, report and diagram in <code>docs/</code></td></tr>
+</table>
+</body></html>
