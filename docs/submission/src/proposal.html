@@ -1,0 +1,65 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Parchi: Project Proposal</title><link rel="stylesheet" href="doc.css"></head>
+<body>
+<h1>Parchi: Serverless, Event-Driven Bill Processing on AWS</h1>
+<div class="sub">Project proposal · UCS531 Cloud Computing · Thapar Institute of Engineering &amp; Technology, Patiala</div>
+<table class="meta">
+  <tr><td>Team</td><td>Hardik Pajiala · Shikhar Goel · Rumnik Dhillon</td></tr>
+  <tr><td>Faculty advisor</td><td>Dr. Anil Singh</td></tr>
+  <tr><td>Cloud platform</td><td>Amazon Web Services (AWS Academy)</td></tr>
+  <tr><td>Syllabus topics</td><td>Serverless computing (FaaS), event-driven architecture, cloud service models, infrastructure as code</td></tr>
+</table>
+
+<h2>1. Problem statement</h2>
+<p>Students and families collect paper slips (<i>parchi</i> in Hindi): fee receipts, pharmacy bills, shop and GST tax invoices.
+They matter later for reimbursements, scholarships, insurance claims and tax filing, but they are rarely organised.
+Typing the vendor, date, amount and GST from each slip into a spreadsheet is slow and error-prone, and the slips fade or get lost.</p>
+<p>A traditional solution would run an OCR server all day. But uploads are <b>bursty and unpredictable</b>: nothing for hours,
+then dozens at the end of a month or a semester. An always-on server is paid for while idle and still struggles with a burst.
+This is the kind of workload that <b>serverless, event-driven cloud computing</b> is designed for.</p>
+
+<h2>2. Proposed solution</h2>
+<p><b>Parchi</b> is a web application where a user uploads a photo or PDF of a bill. A chain of managed AWS services then
+reads it, checks it, files it and emails a confirmation, with <b>no server running at any point</b>:</p>
+<ol>
+  <li>The browser asks <b>API Gateway</b> for a one-time upload link; a <b>Lambda</b> function checks the type, size and daily limit.</li>
+  <li>The file is uploaded <b>directly to Amazon S3</b> (it never passes through our code).</li>
+  <li>S3 fires an <b>event</b> into an <b>SQS queue</b>, which buffers bursts and retries failures (dead-letter queue after 3 tries).</li>
+  <li>A <b>Lambda worker</b> reads the bill with <b>OCR</b> (Amazon Textract, or the open-source Tesseract engine in a container image).</li>
+  <li>The fields are validated (totals reconcile, GSTIN checksum, plausible date) and stored in <b>DynamoDB</b>.</li>
+  <li><b>SNS</b> emails the owner; a web dashboard shows each bill moving through the pipeline live.</li>
+</ol>
+
+<h2>3. Objectives</h2>
+<ol>
+  <li><b>Secure direct uploads</b> of JPEG, PNG and PDF bills (up to 10 MB) from a browser using presigned S3 URLs.</li>
+  <li><b>Automatic extraction</b> of vendor, date, total, tax (CGST + SGST), bill number and line items, normalising Indian formats
+      (₹ with lakh grouping, dd/mm/yyyy dates, GSTIN).</li>
+  <li><b>Asynchronous, reliable processing</b>: an event-driven S3 → SQS → Lambda pipeline with retries, no duplicate processing
+      (idempotency) and a dead-letter queue with alarms.</li>
+  <li><b>Trustworthy results</b>: cross-checks on every bill, with doubtful ones flagged "needs review" for a human to correct.</li>
+  <li><b>Per-user email notifications</b> through one SNS topic with subscription filter policies.</li>
+  <li><b>A live dashboard</b> showing every document's position in the pipeline, with timings, a ledger and spending charts.</li>
+  <li><b>Elastic and cost-controlled</b>: scale from zero automatically, cost nothing while idle, cap daily uploads.</li>
+  <li><b>Infrastructure as code</b>: the entire system defined in one AWS SAM template and deployed with one command.</li>
+</ol>
+
+<h2>4. Cloud services and technologies</h2>
+<table>
+  <tr><th>Layer</th><th>Services / tools</th></tr>
+  <tr><td>Compute (FaaS)</td><td>AWS Lambda (Python 3.13, arm64), one worker packaged as a container image in Amazon ECR</td></tr>
+  <tr><td>Storage and data</td><td>Amazon S3 (uploads, website), Amazon DynamoDB (on-demand, single table)</td></tr>
+  <tr><td>Messaging / events</td><td>S3 event notifications, Amazon SQS + dead-letter queue, Amazon SNS</td></tr>
+  <tr><td>API and delivery</td><td>Amazon API Gateway (HTTP API), Amazon CloudFront; Vercel for a public front end</td></tr>
+  <tr><td>OCR</td><td>Amazon Textract AnalyzeExpense, or open-source Tesseract OCR (swappable engine)</td></tr>
+  <tr><td>Operations</td><td>Amazon CloudWatch (logs, custom metrics, dashboard, alarms), IAM, AWS SAM / CloudFormation</td></tr>
+  <tr><td>Application</td><td>React + TypeScript dashboard; pytest and moto (AWS emulator) for automated tests; GitHub Actions CI</td></tr>
+</table>
+
+<h2>5. Expected outcomes</h2>
+<ul>
+  <li>A working, deployed system on AWS that turns a bill photo into a filed, validated record and an email in a few seconds.</li>
+  <li>A demonstration of core cloud concepts: FaaS, event-driven design, elasticity, managed services, least privilege, IaC.</li>
+  <li>A public GitHub repository with README, automated tests and deployment scripts; a report with results and cost analysis.</li>
+</ul>
+</body></html>

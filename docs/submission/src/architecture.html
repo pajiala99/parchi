@@ -1,0 +1,133 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Parchi architecture</title>
+<style>
+  html,body{margin:0;background:#fff;font-family:"Helvetica Neue",Arial,sans-serif}
+  svg{display:block}
+  .box{fill:#fff;stroke:#232f3e;stroke-width:2}
+  .aws{fill:#fff7ed;stroke:#ec7211;stroke-width:2}
+  .ext{fill:#f1f5f9;stroke:#475569;stroke-width:2}
+  .cloud{fill:#fbfcfe;stroke:#232f3e;stroke-width:2;stroke-dasharray:10 6}
+  .t{font-size:19px;font-weight:700;fill:#111827}
+  .s{font-size:14px;fill:#4b5563}
+  .tag{font-size:12px;font-weight:700;fill:#ec7211;letter-spacing:.08em}
+  .e{stroke:#232f3e;stroke-width:2.2;fill:none}
+  .a{stroke:#ec7211;stroke-width:2.2;fill:none;stroke-dasharray:8 6}
+  .o{stroke:#94a3b8;stroke-width:1.6;fill:none;stroke-dasharray:3 5}
+  .lab{font-size:14px;fill:#111827}
+  .num{fill:#232f3e}
+  .numt{font-size:13px;font-weight:700;fill:#fff}
+  .title{font-size:26px;font-weight:800;fill:#111827}
+  .sub{font-size:15px;fill:#4b5563}
+</style></head>
+<body>
+<svg width="1600" height="1000" viewBox="0 0 1600 1000" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#232f3e"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#ec7211"/></marker>
+    <marker id="q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#94a3b8"/></marker>
+  </defs>
+
+  <text class="title" x="40" y="44">Parchi: serverless, event-driven bill pipeline on AWS</text>
+  <text class="sub" x="40" y="70">Solid arrows: request / response. Dashed orange arrows: asynchronous events. Numbers follow one bill from upload to email.</text>
+
+  <!-- AWS cloud boundary -->
+  <rect class="cloud" x="470" y="100" width="1000" height="870" rx="18"/>
+  <text class="tag" x="492" y="128">AWS CLOUD · us-east-1 · AWS ACADEMY</text>
+
+  <!-- external -->
+  <rect class="ext" x="40" y="400" width="190" height="90" rx="12"/>
+  <text class="t" x="58" y="436">User's browser</text><text class="s" x="58" y="460">React + TypeScript</text><text class="s" x="58" y="478">dashboard</text>
+
+  <rect class="ext" x="260" y="170" width="180" height="90" rx="12"/>
+  <text class="t" x="278" y="206">Vercel</text><text class="s" x="278" y="230">static site, proxies</text><text class="s" x="278" y="248">/api/* to CloudFront</text>
+
+  <rect class="ext" x="1490" y="590" width="100" height="80" rx="12"/>
+  <text class="t" x="1508" y="626">Email</text><text class="s" x="1508" y="650">inbox</text>
+
+  <!-- request path -->
+  <rect class="box" x="510" y="170" width="190" height="90" rx="12"/>
+  <text class="t" x="528" y="206">CloudFront</text><text class="s" x="528" y="230">HTTPS, site from</text><text class="s" x="528" y="248">private S3 + /api/*</text>
+
+  <rect class="box" x="750" y="170" width="190" height="90" rx="12"/>
+  <text class="t" x="768" y="206">API Gateway</text><text class="s" x="768" y="230">HTTP API, 11 routes,</text><text class="s" x="768" y="248">throttled</text>
+
+  <rect class="box" x="990" y="170" width="200" height="90" rx="12"/>
+  <text class="t" x="1008" y="206">Lambda × 3 (API)</text><text class="s" x="1008" y="230">uploads · documents ·</text><text class="s" x="1008" y="248">subscription (Python)</text>
+
+  <rect class="box" x="1240" y="380" width="200" height="90" rx="12"/>
+  <text class="t" x="1258" y="416">DynamoDB</text><text class="s" x="1258" y="440">documents, profiles,</text><text class="s" x="1258" y="458">daily quotas (TTL)</text>
+
+  <!-- event path -->
+  <rect class="box" x="510" y="590" width="190" height="90" rx="12"/>
+  <text class="t" x="528" y="626">S3 uploads</text><text class="s" x="528" y="650">private, encrypted,</text><text class="s" x="528" y="668">presigned POST</text>
+
+  <rect class="box" x="750" y="590" width="190" height="90" rx="12"/>
+  <text class="t" x="768" y="626">SQS queue</text><text class="s" x="768" y="650">buffers bursts, 3 retries,</text><text class="s" x="768" y="668">then dead-letter queue</text>
+
+  <rect class="aws" x="990" y="570" width="200" height="130" rx="12"/>
+  <text class="t" x="1008" y="606">Lambda worker</text><text class="s" x="1008" y="630">container image,</text><text class="s" x="1008" y="648">≤ 5 at once, 1 GB</text>
+  <rect x="1008" y="660" width="164" height="28" rx="6" fill="#ec7211"/><text x="1020" y="679" font-size="14" font-weight="700" fill="#fff">Tesseract OCR inside</text>
+
+  <rect class="box" x="1240" y="590" width="200" height="90" rx="12"/>
+  <text class="t" x="1258" y="626">SNS topic</text><text class="s" x="1258" y="650">per-user filter policy</text><text class="s" x="1258" y="668">on "owner"</text>
+
+  <rect class="box" x="990" y="760" width="200" height="80" rx="12"/>
+  <text class="t" x="1008" y="796">Amazon ECR</text><text class="s" x="1008" y="820">worker's Docker image</text>
+
+  <!-- platform strip -->
+  <rect class="box" x="510" y="880" width="290" height="70" rx="12"/>
+  <text class="t" x="528" y="912">CloudWatch</text><text class="s" x="528" y="934">logs, custom metrics, dashboard, 4 alarms</text>
+  <rect class="box" x="820" y="880" width="290" height="70" rx="12"/>
+  <text class="t" x="838" y="912">IAM (LabRole)</text><text class="s" x="838" y="934">permissions for every function</text>
+  <rect class="box" x="1130" y="880" width="310" height="70" rx="12"/>
+  <text class="t" x="1148" y="912">CloudFormation via AWS SAM</text><text class="s" x="1148" y="934">template.yaml creates ~45 resources</text>
+
+  <!-- edges: request path -->
+  <path class="e" d="M135,400 L135,215 L258,215" marker-end="url(#k)"/>
+  <path class="e" d="M440,215 L508,215" marker-end="url(#k)"/>
+  <path class="e" d="M700,215 L748,215" marker-end="url(#k)"/>
+  <path class="e" d="M940,215 L988,215" marker-end="url(#k)"/>
+  <path class="e" d="M1190,215 L1340,215 L1340,378" marker-end="url(#k)"/>
+  <text class="lab" x="150" y="300">POST /api/uploads</text>
+  <text class="lab" x="1200" y="205">waiting record</text>
+
+  <!-- browser to S3 -->
+  <path class="e" d="M230,460 L370,460 L370,635 L508,635" marker-end="url(#k)"/>
+  <text class="lab" x="250" y="560">file goes straight</text><text class="lab" x="250" y="578">to S3 (no server)</text>
+
+  <!-- async -->
+  <path class="a" d="M700,635 L748,635" marker-end="url(#g)"/>
+  <path class="a" d="M940,635 L988,635" marker-end="url(#g)"/>
+  <path class="e" d="M1190,590 L1215,590 L1215,425 L1238,425" marker-end="url(#k)"/>
+  <path class="a" d="M1190,655 L1238,655" marker-end="url(#g)"/>
+  <path class="a" d="M1440,630 L1488,630" marker-end="url(#g)"/>
+  <path class="e" d="M1090,760 L1090,702" marker-end="url(#k)"/>
+  <text class="lab" x="705" y="715">ObjectCreated</text><text class="lab" x="705" y="733">event</text>
+  <text class="lab" x="1226" y="500">checked</text><text class="lab" x="1226" y="518">fields</text>
+  <text class="lab" x="1100" y="738">image</text>
+
+  <!-- observability (light dotted) -->
+  
+
+  <!-- step numbers -->
+  <g><circle class="num" cx="135" cy="330" r="14"/><text class="numt" x="135" y="335" text-anchor="middle">1</text></g>
+  <g><circle class="num" cx="370" cy="520" r="14"/><text class="numt" x="370" y="525" text-anchor="middle">2</text></g>
+  <g><circle class="num" cx="724" cy="610" r="14"/><text class="numt" x="724" y="615" text-anchor="middle">3</text></g>
+  <g><circle class="num" cx="964" cy="610" r="14"/><text class="numt" x="964" y="615" text-anchor="middle">4</text></g>
+  <g><circle class="num" cx="1090" cy="555" r="14"/><text class="numt" x="1090" y="560" text-anchor="middle">5</text></g>
+  <g><circle class="num" cx="1215" cy="545" r="14"/><text class="numt" x="1215" y="550" text-anchor="middle">6</text></g>
+  <g><circle class="num" cx="1464" cy="605" r="14"/><text class="numt" x="1464" y="610" text-anchor="middle">7</text></g>
+
+  <!-- legend of steps -->
+  <g font-size="14" fill="#111827">
+    <text x="40" y="620" font-weight="700">One bill, step by step</text>
+    <text x="40" y="646">1  Ask for a one-time upload link</text>
+    <text x="40" y="668">2  Upload the file straight to S3</text>
+    <text x="40" y="690">3  S3 fires an event into SQS</text>
+    <text x="40" y="712">4  SQS hands the job to the worker</text>
+    <text x="40" y="734">5  Tesseract reads the bill</text>
+    <text x="40" y="756">6  Fields checked, saved in DynamoDB</text>
+    <text x="40" y="778">7  SNS emails the owner</text>
+  </g>
+</svg>
+</body></html>

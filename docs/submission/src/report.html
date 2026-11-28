@@ -1,0 +1,170 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Parchi: Project Report</title><link rel="stylesheet" href="doc.css">
+<style>
+  body { font-size: 9.9pt; line-height: 1.36; }
+  h2 { margin-top: 8pt; }
+  table { font-size: 8.9pt; }
+  .shot-big img { max-height: 118mm; object-fit: cover; object-position: top; }
+  .shot-doc img { max-height: 112mm; object-fit: cover; object-position: top; }
+</style></head>
+<body>
+
+<!-- PAGE 1 -->
+<div class="page">
+<h1>Parchi: Serverless, Event-Driven Bill Processing on AWS</h1>
+<div class="sub">Project report · UCS531 Cloud Computing · Thapar Institute of Engineering &amp; Technology, Patiala</div>
+<table class="meta">
+  <tr><td>Team</td><td>Hardik Pajiala · Shikhar Goel · Rumnik Dhillon</td></tr>
+  <tr><td>Faculty advisor</td><td>Dr. Anil Singh</td></tr>
+  <tr><td>Live deployment</td><td><a href="https://parchi-theta.vercel.app">parchi-theta.vercel.app</a> (API on AWS through CloudFront)</td></tr>
+  <tr><td>Source code</td><td><a href="https://github.com/pajiala99/parchi">github.com/pajiala99/parchi</a></td></tr>
+</table>
+
+<h2>1. Abstract</h2>
+<p>Students and families collect paper slips (fee receipts, pharmacy bills, GST invoices) that matter later for reimbursements,
+scholarships and tax filing but are rarely organised. <b>Parchi</b> (Hindi for "slip") lets a user upload a photo or PDF of a bill;
+the system extracts the vendor, date, amounts, GST and line items, classifies the bill, checks the numbers, files the result and
+emails a confirmation. It is built entirely from managed AWS services wired together by events (S3, SQS, Lambda, DynamoDB, SNS,
+API Gateway, CloudFront, ECR, CloudWatch) and defined as infrastructure as code with AWS SAM. It is deployed and working on AWS:
+a bill goes from upload to filed in about 5–7 seconds, the system scales from zero, and it costs nothing while idle.</p>
+
+<h2>2. Problem and objectives</h2>
+<p>Typing bill data by hand is slow and error-prone, and uploads are bursty: nothing for hours, then many at once. An always-on
+OCR server would be paid for while idle and still struggle with bursts, which makes this a natural fit for serverless computing.
+The objectives were to:</p>
+<ol>
+  <li>accept JPEG, PNG and PDF uploads directly from the browser to S3, securely, without passing files through our code;</li>
+  <li>extract structured fields with OCR and normalise Indian formats (₹ with lakh grouping, dd/mm/yyyy, CGST + SGST, GSTIN);</li>
+  <li>process asynchronously and reliably: retries, no duplicate processing, a dead-letter queue and alarms;</li>
+  <li>validate every bill and flag doubtful ones for review; email each user about their own bills only;</li>
+  <li>show documents moving through the pipeline on a live dashboard;</li>
+  <li>keep cost near zero when idle and bounded under load, and define the whole system as code.</li>
+</ol>
+
+<h2>3. Cloud concepts applied</h2>
+<ul>
+  <li><b>Function-as-a-Service:</b> four AWS Lambda functions hold all application logic; AWS runs, scales and patches them and bills per request and millisecond.</li>
+  <li><b>Service models:</b> Lambda is FaaS; S3, DynamoDB, SQS and SNS are fully managed (PaaS) services; no IaaS (EC2, VPC) is used. Public cloud deployment.</li>
+  <li><b>Event-driven architecture:</b> an S3 <code>ObjectCreated</code> event, delivered through SQS, triggers processing; components talk through events and queues, so each can fail or scale on its own.</li>
+  <li><b>Elasticity:</b> Lambda's SQS event source mapping adds workers as the queue grows (capped at five) and scales back to zero when it drains.</li>
+  <li><b>Containers on serverless:</b> the worker is a Docker image stored in Amazon ECR, carrying the open-source Tesseract OCR engine.</li>
+  <li><b>Infrastructure as code:</b> <code>template.yaml</code> (AWS SAM, a CloudFormation extension) describes about 45 resources; one command creates or deletes everything.</li>
+  <li><b>Security and least privilege:</b> private encrypted buckets, TLS-only access, short-lived upload links and scoped IAM permissions.</li>
+</ul>
+</div>
+
+<!-- PAGE 2 -->
+<div class="page">
+<h2>4. System architecture</h2>
+<figure><img src="../02-Architecture-Diagram.png" alt="Architecture diagram">
+<figcaption>Figure 1. Request path (top) and event path (bottom). Everything inside the dashed box runs on AWS.</figcaption></figure>
+<table>
+  <tr><th style="width:7mm">Step</th><th>What happens</th></tr>
+  <tr><td>1</td><td>The dashboard calls <code>POST /api/uploads</code> (Vercel → CloudFront → API Gateway). The <i>uploads</i> Lambda validates type and size, takes one unit of the daily quota in a DynamoDB transaction, writes a <i>waiting</i> record and returns a presigned S3 POST valid for 5 minutes.</td></tr>
+  <tr><td>2</td><td>The browser posts the file straight to S3. The POST policy pins the key and content type and limits size to 10 MB; S3 itself rejects anything else.</td></tr>
+  <tr><td>3</td><td>S3 publishes an <code>ObjectCreated</code> event for the <code>uploads/</code> prefix to the SQS ingest queue.</td></tr>
+  <tr><td>4</td><td>Lambda polls the queue and invokes the worker with batches of up to five messages, at most five workers at once.</td></tr>
+  <tr><td>5</td><td>The worker (a container image from ECR) reads the image with <b>Tesseract OCR</b> and turns words and confidences into fields.</td></tr>
+  <tr><td>6</td><td>Fields are normalised, classified and cross-checked; one conditional write stores the result in DynamoDB with timings.</td></tr>
+  <tr><td>7</td><td>SNS publishes a confirmation with an <code>owner</code> attribute; a filter policy delivers it only to that user's email.</td></tr>
+</table>
+<p class="small">The dashboard polls <code>GET /api/documents</code> while anything is in flight and shows each bill's current stage. Data model: one
+DynamoDB table, partition <code>WS#&lt;owner&gt;</code>, sort keys <code>DOC#&lt;ULID&gt;</code>, <code>PROFILE</code> and <code>QUOTA#&lt;day&gt;</code> (expired by TTL).</p>
+</div>
+
+<!-- PAGE 3 -->
+<div class="page">
+<h2>5. Implementation and deployment</h2>
+<table>
+  <tr><th>Component</th><th>Technology</th></tr>
+  <tr><td>Infrastructure</td><td>AWS SAM <code>template.yaml</code> (~45 resources), <code>scripts/deploy.sh</code>, <code>scripts/academy-up.sh</code></td></tr>
+  <tr><td>API functions</td><td>3 Lambda functions in Python 3.13 on arm64 (Graviton): uploads, documents, subscription</td></tr>
+  <tr><td>Worker</td><td>Lambda container image (Python 3.13 + Tesseract OCR), 1 GB memory, stored in Amazon ECR</td></tr>
+  <tr><td>Extraction</td><td>OCR engine interface (Textract / Tesseract / replay); Indian money and date parsing; GSTIN checksum; classifier</td></tr>
+  <tr><td>Front end</td><td>React 19 + TypeScript + Vite, served by CloudFront from private S3, and by Vercel (proxying <code>/api/*</code>)</td></tr>
+  <tr><td>Quality</td><td>pytest (118 backend tests, 93% coverage) with moto (AWS emulator), Vitest, ruff, cfn-lint, GitHub Actions CI</td></tr>
+</table>
+
+<h3>Deployment on AWS Academy</h3>
+<p>The stack <code>parchi-dev</code> is deployed in <code>us-east-1</code> in an AWS Academy account with one command. AWS SAM builds the worker's
+Docker image, pushes it to ECR, uploads the template and lets CloudFormation create every resource. Academy accounts cannot call
+Amazon Textract or AWS Budgets, so the deployment uses <code>--ocr-engine tesseract</code> and the lab's IAM <code>LabRole</code>.
+Because OCR sits behind an engine interface, switching from Textract to Tesseract needed only a Dockerfile and a deploy parameter;
+the queue, checks, storage and emails were unchanged.</p>
+<div class="note">An Academy sandbox deletes all resources when a lab session ends, so <code>scripts/academy-up.sh</code> rebuilds the
+whole stack (about 10 minutes), points the Vercel site at the new CloudFront address and checks <code>/api/health</code>.</div>
+
+<h3>Extraction and validation</h3>
+<p>OCR returns several candidates per field. On Indian bills "Total" may label the quantity column ("Total Qty: 12"), and tax is
+printed as separate CGST and SGST lines, so candidates are scored by label ("Grand Total", "Net Payable" high; "Sub Total",
+"Total Qty" penalised) and tax components are added up. Three checks make results trustworthy: the <b>GSTIN mod-36 check digit</b>,
+<b>subtotal + tax = total</b> (within ₹1 or 1%), and a <b>plausible date</b>. A failed check or a missing field marks the bill
+<i>needs review</i>; users can correct fields, and corrections are recorded. A keyword classifier labels each bill as fee receipt,
+medical bill, invoice or other and shows the evidence it used.</p>
+
+<h2>6. Reliability, security and cost</h2>
+<table>
+  <tr><th>Concern</th><th>How it is handled</th></tr>
+  <tr><td>Duplicate SQS delivery</td><td>The worker claims a document with a conditional write and a lease; a second copy is skipped (idempotent).</td></tr>
+  <tr><td>One bad file in a batch</td><td><code>ReportBatchItemFailures</code>: only that message is retried.</td></tr>
+  <tr><td>Repeated failure</td><td>After 3 receives the event moves to the dead-letter queue (14 days) and a CloudWatch alarm fires.</td></tr>
+  <tr><td>Access control</td><td>Private buckets, SSE encryption, TLS-only policies, Origin Access Control for the site; per-workspace keys (stored hashed) scope every query.</td></tr>
+  <tr><td>Abuse and cost</td><td>API throttling (20 rps), daily upload caps (20 per user, 200 total) in a DynamoDB transaction, worker concurrency capped at 5.</td></tr>
+  <tr><td>Observability</td><td>CloudWatch custom metrics (EMF), a dashboard and 4 alarms (dead letters, worker errors, API 5xx, queue age).</td></tr>
+</table>
+<p><b>Cost for 1,000 bills</b> with Tesseract: about <b>$0.10</b> (Lambda time and requests; no per-page OCR fee). With Textract it would be
+about $10, almost all OCR. Idle cost is effectively zero, whereas an always-on <code>t3.small</code> alone costs about $15 per month.</p>
+</div>
+
+<!-- PAGE 4 -->
+<div class="page">
+<h2>7. Working implementation</h2>
+<p class="small">Screenshots of the same build that is deployed on AWS, run here with the project's local stack (the real Lambda handlers against an AWS emulator, with real Tesseract OCR), because the Academy sandbox is wiped between lab sessions. Timings on AWS are in Section 8.</p>
+<div class="grid2">
+<figure><img src="shots/dashboard.png" alt="Dashboard">
+<figcaption>Figure 2. The dashboard after uploading the five sample bills: stats, daily quota, the live pipeline strip with every AWS hop
+ticked (API Gateway → S3 → SQS → Lambda → Tesseract → DynamoDB → SNS) and the ledger of filed bills.</figcaption></figure>
+<figure><img src="shots/document.png" alt="Document detail">
+<figcaption>Figure 3. One bill in detail: extracted fields with OCR confidence, the classification evidence, the checks it passed and
+the per-stage pipeline timeline recorded by each AWS service.</figcaption></figure>
+</div>
+<div class="grid2">
+  <figure><img src="shots/timeline.png" alt="Pipeline timeline">
+  <figcaption>Figure 4. Pipeline timeline of one bill: each stage with the AWS service that handled it and its timing.</figcaption></figure>
+  <figure><img src="shots/how.png" alt="How it works page">
+  <figcaption>Figure 5. The "How it works" page of the app: the architecture and the steps, explained for users.</figcaption></figure>
+</div>
+
+</div>
+
+<!-- PAGE 5 -->
+<div>
+<h2>8. Testing and results</h2>
+<table>
+  <tr><th>Measure</th><th>Result</th></tr>
+  <tr><td>Upload → filed, live on AWS</td><td>4.6 – 7.3 s per bill on AWS (Tesseract 3.8 – 6 s), about 15 s on a cold start; 0.2 – 0.6 s on the local stack</td></tr>
+  <tr><td>Fields read correctly (6 sample bills × 6 fields)</td><td>36 / 36 (type, vendor, date, reference, total, tax), including a tilted, noisy phone photo</td></tr>
+  <tr><td>Automated tests</td><td>118 backend tests (93% coverage) + frontend tests, run in GitHub Actions CI on every push</td></tr>
+  <tr><td>End-to-end test</td><td>Presigned POST → S3 event → SQS → worker → DynamoDB → filtered SNS delivery, over real HTTP against an AWS emulator</td></tr>
+</table>
+<p class="small">The accuracy figure is a smoke test on synthetic bills that were also used while writing the heuristics, not a benchmark.</p>
+
+<h2>9. Limitations and future work</h2>
+<ul>
+  <li>Measure accuracy on a larger set of real bills, and compare Tesseract with Textract on an account that allows it.</li>
+  <li>Multi-page PDFs need Textract's asynchronous API (<code>StartExpenseAnalysis</code>) with an SNS completion event.</li>
+  <li>Workspace keys instead of user accounts; production would add Amazon Cognito and a JWT authorizer on API Gateway.</li>
+  <li>The dashboard polls; API Gateway WebSockets would push updates instead.</li>
+</ul>
+
+<h2>10. Conclusion</h2>
+<p>Parchi shows that a complete document-processing product (upload, OCR, validation, storage, notification and a live dashboard)
+can be built from managed cloud services connected by events, with no servers to run. Serverless gives elasticity and near-zero
+idle cost by default; the engineering effort went into correctness: idempotency, failure handling, least-privilege security, cost
+limits and checks on the extracted data. Deploying on AWS Academy also showed the value of loose coupling: when Textract was
+unavailable, the OCR engine was replaced without changing the rest of the pipeline.</p>
+<p class="small"><b>References:</b> AWS Lambda Developer Guide (SQS event sources, container images); Amazon S3 User Guide (event notifications,
+presigned POST); Amazon SNS (subscription filter policies); Amazon DynamoDB (conditional writes, transactions, TTL); AWS SAM
+Developer Guide; Tesseract OCR documentation; GSTN GSTIN check-digit specification.</p>
+</div>
+</body></html>

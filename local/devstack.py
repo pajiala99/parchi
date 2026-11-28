@@ -306,7 +306,7 @@ def make_server(routes, port: int, static_dir: Path) -> ThreadingHTTPServer:
 
         do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = _dispatch
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return ThreadingHTTPServer((os.environ.get("PARCHI_BIND", "127.0.0.1"), port), Handler)
 
 
 # ------------------------------------------------------------------- main
@@ -348,7 +348,7 @@ def main() -> None:
     # The emulator logs every request it serves; keep the console to the pipeline's own logs.
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-    moto = ThreadedMotoServer(ip_address="127.0.0.1", port=args.aws_port, verbose=False)
+    moto = ThreadedMotoServer(ip_address=os.environ.get("PARCHI_BIND", "127.0.0.1"), port=args.aws_port, verbose=False)
     moto.start()
     urls = provision()
     os.environ["TOPIC_ARN"] = urls["topic"]
